@@ -1,0 +1,311 @@
+using System.CodeDom;
+using System.Xml.Schema;
+using UnityEngine;
+
+namespace KickLifeSupport
+{
+    public class KickLifeSupportModule : PartModule
+    {
+        private float _lastUpdateTime = 0f;
+        private float _lastWarningTime = 0f; // Added for spam protection
+        private const float UpdateInterval = 5f;
+
+        const double epsilon = 0.0001;
+
+        /// <summary>
+        /// The amount of air (in liters) available per kerbal.
+        /// </summary>
+        const double airPerKerbal = 2000;
+        /// <summary>
+        /// The CO2 concentration (in liters) threshold for warning. This is 3% of airPerKerbal.
+        /// </summary>
+        const double co2Warning = 0.03;
+        /// <summary>
+        /// The CO2 concentration (in liters) threshold for fatality. This is 10% of airPerKerbal.
+        /// </summary>
+        const double co2Fatal = 0.1;
+
+        [KSPField(guiActive = true, guiActiveEditor = false, guiName = "Status", groupName = "KICKLS", groupDisplayName = "Life Support")]
+        public string lsStatus = "Nominal";
+
+        float cabinCO2 = 0f;
+        [KSPField(guiActive = true, guiActiveEditor = false, guiName = "CO2 Level", groupName = "KICKLS", groupDisplayName = "Life Support", guiFormat = "P1")]
+        public float co2Level = 0f;
+
+        [KSPField(isPersistant = true, guiActive = true, guiActiveEditor = true, guiName = "Scrubber", groupName = "KICKLS", groupDisplayName = "Life Support"), UI_Toggle(disabledText = "Off", enabledText = "On")]
+        public bool scrubberEnabled = true;
+
+        [KSPField(guiActive = true, guiActiveEditor = false, guiName = "Scrubber Status", groupName = "KICKLS", groupDisplayName = "Life Support")]
+        public string scrubberStatus = "On";
+
+        int o2Id = -1;
+        int co2Id = -1;
+        int foodId = -1;
+        int waterId = -1;
+        int wasteId = -1;
+        int wasteWaterId = -1;
+        int lithiumHydroxideId = -1;
+        int electricChargeId = -1;
+
+        float o2RequestRate;
+        float co2RequestRate;
+        float scrubberRequestRate;
+        float foodRequestRate;
+        float waterRequestRate;
+        float wasteRequestRate;
+        float wasteWaterRequestRate;
+        float lithiumHydroxideRequestRate;
+
+        float scrubberECRequestRate;
+
+        public override void OnStart(StartState state)
+        {
+            base.OnStart(state);
+            Debug.Log("[KickLifeSupport] Module started on part: " + part.name);
+            GetResourceIds();
+            GetSettings();
+        }
+
+        void GetResourceIds()
+        {
+            o2Id = GetSafeId("Oxygen");
+            co2Id = GetSafeId("CarbonDioxide");
+            foodId = GetSafeId("Food");
+            waterId = GetSafeId("Water");
+            wasteId = GetSafeId("Waste");
+            wasteWaterId = GetSafeId("WasteWater");
+            lithiumHydroxideId = GetSafeId("LithiumHydroxide");
+            electricChargeId = GetSafeId("ElectricCharge");
+        }   
+
+        int GetSafeId(string name)
+        {
+            PartResourceDefinition def = PartResourceLibrary.Instance.GetDefinition(name);
+            return (def != null) ? def.id : -1;
+        }
+        
+        void GetSettings()
+        {
+            ConfigNode[] nodes = GameDatabase.Instance.GetConfigNodes("KICKLS_SETTINGS");
+            if (nodes.Length == 0)
+            {
+                Debug.LogError("[KickLifeSupport] No KICKLS_SETTINGS found");
+                this.enabled = false;
+                return;
+            }
+
+            ConfigNode settings = nodes[0];
+            o2RequestRate = GetValue(settings, "OXYGEN_RATE");
+            co2RequestRate = GetValue(settings, "CO2_RATE");
+            scrubberRequestRate = GetValue(settings, "SCRUBBER_RATE");
+            foodRequestRate = GetValue(settings, "FOOD_RATE");
+            waterRequestRate = GetValue(settings, "WATER_RATE");
+            wasteRequestRate = GetValue(settings, "WASTE_RATE");
+            wasteWaterRequestRate = GetValue(settings, "WASTEWATER_RATE");
+            lithiumHydroxideRequestRate = GetValue(settings, "LITHIUMHYDROXIDE_RATE");
+            scrubberECRequestRate = GetValue(settings, "SCRUBBER_EC_RATE");
+        }
+
+        float GetValue(ConfigNode node, string key)
+        {
+            if (float.TryParse(node.GetValue(key), out float value))
+            {
+                return value;
+            }
+            Debug.LogError("[KickLifeSupport] Invalid value for " + key);
+            return 0f;
+        }
+
+        public void FixedUpdate()
+        {
+            if (!HighLogic.LoadedSceneIsFlight) return;
+
+            if (Time.time - _lastUpdateTime > UpdateInterval)
+            {
+                _lastUpdateTime = Time.time;
+            }
+
+            int crewCount = GetLiveCrew();
+            if (crewCount == 0) return;
+
+            double co2Produced = ProcessConsumption(o2Id, o2RequestRate, co2Id, co2RequestRate, crewCount, false).resourceBProduced;
+            
+            cabinCO2 += (float)co2Produced;
+
+            if (scrubberEnabled)
+            {
+                float scrubberECRate = scrubberECRequestRate * Time.fixedDeltaTime * crewCount;
+                
+                double ecGottenDouble = part.RequestResource(electricChargeId, (double)scrubberECRate);
+                
+                if (Mathf.Approximately((float)ecGottenDouble, scrubberECRate))
+                {
+                    double co2Removed = scrubberRequestRate * Time.fixedDeltaTime * crewCount;
+                    // LithiumHydroxide is converted to waste as it's used.
+                    double loOHRemovedRatio = ProcessConsumption(lithiumHydroxideId, lithiumHydroxideRequestRate, wasteId, lithiumHydroxideRequestRate, crewCount, true).resourceARatio;
+                    double actualCO2Removed = co2Removed * loOHRemovedRatio;
+                    
+                    cabinCO2 -= (float)actualCO2Removed;
+                    
+                    scrubberStatus = "On";
+                }
+                else
+                {
+                    part.RequestResource(electricChargeId, -ecGottenDouble);
+                    scrubberStatus = "No Power";
+                }
+            }
+            else
+            {
+                scrubberStatus = "Off";
+            }
+
+            ProcessConsumption(foodId, foodRequestRate, wasteId, wasteRequestRate, crewCount, true);
+            ProcessConsumption(waterId, waterRequestRate, wasteWaterId, wasteWaterRequestRate, crewCount, true);
+            
+            // Safety Clamp
+            if (cabinCO2 < 0) cabinCO2 = 0;
+            if (crewCount > 0 && airPerKerbal > 0)
+                co2Level = cabinCO2 / (float)(crewCount * airPerKerbal);
+            else
+                co2Level = 0;
+
+            if (co2Level >= co2Fatal)
+            {
+                KillCrew();
+                lsStatus = "Fatal CO2 Levels";
+            }
+            else if (co2Level >= co2Warning)
+            {
+                lsStatus = "Dangerous CO2 Levels";
+            }
+
+            
+        }
+
+        (double resourceBProduced, double resourceARatio) ProcessConsumption(int resourceA, float resourceARate, int resourceB, float resourceBRate, int crewCount, bool store = true)
+        {
+            double rARequestRate = resourceARate * Time.fixedDeltaTime * crewCount;
+            if (rARequestRate <= epsilon) return (0, 0);
+
+            double rAConsumed = part.RequestResource(resourceA, rARequestRate); 
+            double rARatio = rAConsumed / rARequestRate;
+            if (rARatio > 1.0) rARatio = 1.0;
+
+            double rBProduced = rARatio * resourceBRate * Time.fixedDeltaTime * crewCount;
+            if (store)
+            {
+                double amountToPush = -rBProduced;
+                double amountActuallyAdded = part.RequestResource(resourceB, amountToPush);
+                
+                if (amountActuallyAdded > amountToPush + epsilon)
+                {
+                    if (Time.time - _lastWarningTime > 5f)
+                    {
+                        _lastWarningTime = Time.time;
+                        string resName = PartResourceLibrary.Instance.GetDefinition(resourceB)?.name ?? "Unknown";
+                        ScreenMessages.PostScreenMessage("KICK Life Support Warning: " + resName + " Storage Full", 3f, ScreenMessageStyle.UPPER_CENTER);
+                    }
+                }
+            }
+            return (rBProduced, rARatio);
+        }
+
+        [KSPEvent(guiActive = true, guiName = "Reload Scrubber", groupName = "KICKLS", groupDisplayName = "Life Support")]
+        public void ReloadScrubber()
+        {
+            string cartridgePartName = "KICKLS_LiOH_Cartridge";
+            double cartridgeVolume = 3;
+
+            PartResource lioh = part.Resources["LithiumHydroxide"];
+            if (lioh.amount >= lioh.maxAmount * 0.95)
+            {
+                ScreenMessages.PostScreenMessage("Scrubber is already full.", 3f, ScreenMessageStyle.UPPER_CENTER);
+                return;
+            }
+
+            if (ConsumePartFromInventory(cartridgePartName))
+            {
+                double waste = cartridgeVolume - (lioh.maxAmount - lioh.amount);
+                lioh.amount += lioh.maxAmount;
+                part.RequestResource(wasteId, -waste);    // Throw away the old cartridge
+                ScreenMessages.PostScreenMessage("Scrubber reloaded.", 3f, ScreenMessageStyle.UPPER_CENTER);
+            }
+            else
+            {
+                ScreenMessages.PostScreenMessage("No LiOH Cartridges found in Inventory.", 3f, ScreenMessageStyle.UPPER_CENTER);
+            }
+        }
+
+        bool ConsumePartFromInventory(string partName)
+        {
+            foreach (Part p in vessel.parts)
+            {
+                ModuleInventoryPart inventory = p.FindModuleImplementing<ModuleInventoryPart>();
+                if (inventory != null)
+                {
+                    for (int i = 0; i < inventory.InventorySlots; i++)
+                    {
+                        if (inventory.storedParts.ContainsKey(i))
+                        {
+                            StoredPart item = inventory.storedParts[i];
+
+                            if (item.partName == partName)
+                            {
+                                if (item.quantity > 1)
+                                {
+                                    item.quantity--;
+                                }
+                                else
+                                {
+                                    inventory.storedParts.Remove(i);
+                                }
+
+                                GameEvents.onVesselChange.Fire(this.vessel);
+                                return true;
+                            }
+                        }
+                    }
+                }
+            }
+            return false;
+        }
+
+        #region Crew Helpers
+        int GetLiveCrew()
+        {
+            if (!HighLogic.LoadedSceneIsFlight) return 0;
+
+            int crewCount = 0;
+            foreach (ProtoCrewMember crew in part.protoModuleCrew)
+            {
+                if (crew.rosterStatus == ProtoCrewMember.RosterStatus.Assigned)
+                {
+                    crewCount++;
+                }
+            }
+
+            return crewCount;
+        }
+
+        void KillCrew()
+        {
+            ProtoCrewMember[] crewArray = part.protoModuleCrew.ToArray();
+            foreach (ProtoCrewMember crewMember in crewArray)
+            {
+                if (crewMember.rosterStatus == ProtoCrewMember.RosterStatus.Assigned)
+                {
+                    KillKerbal(crewMember);
+                }
+            }
+        }
+
+        void KillKerbal(ProtoCrewMember crew)
+        {
+            part.RemoveCrewmember(crew);
+            crew.rosterStatus = ProtoCrewMember.RosterStatus.Dead;
+            GameEvents.onVesselChange.Fire(vessel);
+        }
+        #endregion 
+    }
+}

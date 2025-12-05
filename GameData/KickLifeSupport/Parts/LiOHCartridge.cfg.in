@@ -1,0 +1,30 @@
+PART
+{
+    name = KICKLS_LiOH_Cartridge
+    module = Part
+    author = Kick
+    scale = 1.0
+    rescaleFactor = 1.0
+    
+    // ... model and mesh nodes ...
+    
+    title = LiOH Scrubber Cartridge
+    description = A replaceable filter canister containing 1.5L of Lithium Hydroxide. For a crew of 3, this lasts about 28 hours.
+    mass = 0.004 // 4kg (approx Apollo cartridge weight)
+    
+    // 1. The Resource inside (The chemistry)
+    RESOURCE
+    {
+        name = LithiumHydroxide
+        amount = 1.5
+        maxAmount = 1.5
+    }
+
+    // 2. The Inventory Logic (The physical size)
+    MODULE
+    {
+        name = ModuleCargoPart
+        packedVolume = 3
+        stackableQuantity = 10
+    }
+}
