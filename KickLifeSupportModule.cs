@@ -76,7 +76,7 @@ namespace KickLifeSupport
         [KSPEvent(guiActive = true, guiName = "Reload Scrubber", groupName = "KICKLS", groupDisplayName = "Life Support")]
         public void ReloadScrubber()
         {
-            string cartridgePartName = "KICKLS_LiOH_Cartridge";
+            string cartridgePartName = "KickLSLiOHCartridge";
             double cartridgeVolume = 3;
 
             PartResource lioh = part.Resources["LithiumHydroxide"];
@@ -89,7 +89,7 @@ namespace KickLifeSupport
             if (ConsumePartFromInventory(cartridgePartName))
             {
                 double waste = cartridgeVolume - (lioh.maxAmount - lioh.amount);
-                lioh.amount += lioh.maxAmount;
+                lioh.amount = lioh.maxAmount;
                 part.RequestResource(wasteId, -waste);    // Throw away the old cartridge
                 ScreenMessages.PostScreenMessage("Scrubber reloaded.", 3f, ScreenMessageStyle.UPPER_CENTER);
             }
@@ -123,6 +123,7 @@ namespace KickLifeSupport
                                     inventory.storedParts.Remove(i);
                                 }
 
+                                MonoUtilities.RefreshPartContextWindow(p);
                                 GameEvents.onVesselChange.Fire(this.vessel);
                                 return true;
                             }
