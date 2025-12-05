@@ -362,3 +362,11 @@ MigrationBackup/
 # Fody - auto-generated XML schema
 FodyWeavers.xsd
 /.obsidian
+/Get-WaterResources.ps1
+/debugfilter.ps1
+/Water_Resource_Definitions.txt
+/Libs/Assembly-CSharp.dll
+/Libs/UnityEngine.CoreModule.dll
+/Libs/UnityEngine.dll
+/Libs/UnityEngine.IMGUIModule.dll
+/Libs/Assembly-CSharp.dll
