@@ -1,12 +1,7 @@
-﻿using System;
+﻿using JetBrains.Annotations;
+using System;
 using System.Collections.Generic;
-using System.Diagnostics.Eventing.Reader;
-using System.Linq;
-using System.Reflection;
-using System.Text;
-using System.Threading.Tasks;
 using UnityEngine;
-using static UnityEngine.GraphicsBuffer;
 
 namespace KickLifeSupport
 {
@@ -60,20 +55,20 @@ namespace KickLifeSupport
 
         // EC Rates
         float scrubberECRequestRate;
-        float baseSystemECRequestRate;
-        float avionicsECRequestRate;
-        float sasECRequestRate;
-        float rcsECRequestRate;
 
         // Grace Periods
         float graceO2;
         float graceWater;
         float graceFood;
+        float graceClimate;
+        float graceTemp;
 
         // Heat Generation
-        float avionicsHeat;
-        float sasHeat;
-        float rcsHeat;
+        public float kerbalHeat;
+
+        const double minSafeTemp = 5;   // 5c
+        const double maxSafeTemp = 45;  // 45c
+
         #endregion
 
         public override void OnAwake()
@@ -131,6 +126,7 @@ namespace KickLifeSupport
                 RunClimateControl(v, data, deltaTime);
                 EatFood(v, data, deltaTime, liveCrew);
                 DrinkWater(v, data, deltaTime, liveCrew);
+                MonitorTemperature(v, data, deltaTime);
 
                 CheckConditions(data, v);
 
@@ -308,14 +304,14 @@ namespace KickLifeSupport
             wasteWaterRequestRate = GetValue(settings, "WASTEWATER_RATE");
             lithiumHydroxideRequestRate = GetValue(settings, "LITHIUMHYDROXIDE_RATE");
             scrubberECRequestRate = GetValue(settings, "SCRUBBER_EC_RATE");
-            baseSystemECRequestRate = GetValue(settings, "BASESYSTEM_EC_RATE");
-            avionicsECRequestRate = GetValue(settings, "AVIONICS_EC_RATE");
-            sasECRequestRate = GetValue(settings, "SAS_EC_RATE");
-            rcsECRequestRate = GetValue(settings, "RCS_EC_RATE");
 
             graceO2 = GetValue(settings, "GRACE_OXYGEN");
             graceFood = GetValue(settings, "GRACE_FOOD");
             graceWater = GetValue(settings, "GRACE_WATER");
+            graceClimate = GetValue(settings, "GRACE_CLIMATE");
+            graceTemp = GetValue(settings, "GRACE_TEMP");
+
+            kerbalHeat = GetValue(settings, "KERBAL_HEAT");
         }
 
         float GetValue(ConfigNode node, string key)
@@ -415,33 +411,40 @@ namespace KickLifeSupport
             else
                 status.lowO2Time = 0;
         }
+
         void RunScrubber(Vessel v, LifeSupportStatus status, double deltaTime, int totalCrewOnShip)
         {
             double totalCO2Removed = 0;
+            double availableCO2 = status.cabinCO2;
 
             // Rates per seat
             double baseScrubRate = scrubberRequestRate * deltaTime;
             double baseEcRate = scrubberECRequestRate * deltaTime;
             double baseLiohRate = lithiumHydroxideRequestRate * deltaTime;
 
+            // Calculate stiochiometric ratio
+            double liohPerLiterCO2 = 0;
+            if (scrubberRequestRate > 0)
+                liohPerLiterCO2 = lithiumHydroxideRequestRate / scrubberRequestRate;
+
             if (v.loaded)
             {
-                // --- LOADED VESSEL ---
                 List<KickLifeSupportModule> modules = v.FindPartModulesImplementing<KickLifeSupportModule>();
-
                 foreach (KickLifeSupportModule m in modules)
                 {
-                    // 1. Check Switch
+                    m.lastScrubRate = 0;
+
+                    // Is the scrubber on?
                     if (!m.scrubberEnabled)
                     {
-                        m.scrubberStatus = "Off"; // <--- Set Local UI
+                        m.scrubberStatus = "Off";
                         continue;
                     }
 
                     int partCapacity = m.part.CrewCapacity;
                     if (partCapacity == 0) partCapacity = 1;
 
-                    // 2. Check Global Power
+                    // Check that there's enough power to spin the fans
                     double ecReq = baseEcRate * partCapacity;
                     (double amountConsumed, double ratio) ecRes = ConsumeResource(v, electricChargeId, ecReq);
 
@@ -451,20 +454,52 @@ namespace KickLifeSupport
                         continue;
                     }
 
-                    // 3. Check Local LiOH
-                    double liohReq = baseLiohRate * partCapacity;
-                    double liohTaken = m.part.RequestResource(lithiumHydroxideId, liohReq);
+                    // Check how much LiOH there is
+                    double currentLiOH = 0;
+                    PartResource lithiumHydroxide = m.part.Resources.Get(lithiumHydroxideId);
+                    if (lithiumHydroxide != null) currentLiOH = lithiumHydroxide.amount;
 
-                    if (liohTaken < liohReq - epsilon)
+                    // Get the maximum mechanical scrub rate
+                    double maxMechanicalScrub = scrubberRequestRate * partCapacity * deltaTime;
+
+                    // Calculate how much CO2 you can scrub given the LiOH amount
+                    double maxChemicalScrub = 0;
+                    if (liohPerLiterCO2 > 0)
+                        maxChemicalScrub = currentLiOH * liohPerLiterCO2;
+
+                    // Get the max amount of CO2 that can be scrubbed
+                    double maxEnvironmentalScrub = availableCO2;
+
+                    // Find out how much can actually get scrubbed. It'll the the smallest value of the three.
+                    double actualScrub = Math.Min(maxMechanicalScrub, Math.Min(maxChemicalScrub, maxEnvironmentalScrub));
+
+                    // Scrub!
+                    if (actualScrub > epsilon)
                     {
-                        m.scrubberStatus = "No LiOH"; // <--- Set Local UI
+                        double liOHToConsume = actualScrub * liohPerLiterCO2;
+                        double liohTaken = m.part.RequestResource(lithiumHydroxideId, liOHToConsume);
+
+                        if (liohTaken < liOHToConsume - epsilon)
+                        {
+                            m.scrubberStatus = "No LiOH"; // <--- Set Local UI
+                        }
+                        else
+                        {
+                            // Success
+                            m.part.RequestResource(wasteId, -liohTaken); // Waste
+                            totalCO2Removed += (baseScrubRate * partCapacity);
+                            m.scrubberStatus = "Active"; // <--- Set Local UI
+                        }
+
+                        availableCO2 -= actualScrub;
+                        if (deltaTime > 0)
+                        {
+                            m.lastScrubRate = actualScrub / deltaTime;
+                        }
                     }
                     else
                     {
-                        // Success
-                        m.part.RequestResource(wasteId, -liohTaken); // Waste
-                        totalCO2Removed += (baseScrubRate * partCapacity);
-                        m.scrubberStatus = "Active"; // <--- Set Local UI
+                        m.scrubberStatus = "Standby";
                     }
                 }
             }
@@ -553,6 +588,148 @@ namespace KickLifeSupport
             if (status.cabinCO2 < 0) status.cabinCO2 = 0;
         }
 
+        //void RunScrubber(Vessel v, LifeSupportStatus status, double deltaTime, int totalCrewOnShip)
+        //{
+        //    double totalCO2Removed = 0;
+
+        //    // Rates per seat
+        //    double baseScrubRate = scrubberRequestRate * deltaTime;
+        //    double baseEcRate = scrubberECRequestRate * deltaTime;
+        //    double baseLiohRate = lithiumHydroxideRequestRate * deltaTime;
+
+        //    double availableCo2 = status.cabinCO2;
+
+        //    if (v.loaded)
+        //    {
+        //        // --- LOADED VESSEL ---
+        //        List<KickLifeSupportModule> modules = v.FindPartModulesImplementing<KickLifeSupportModule>();
+
+        //        foreach (KickLifeSupportModule m in modules)
+        //        {
+        //            m.lastScrubRate = 0;
+
+        //            // 1. Check Switch
+        //            if (!m.scrubberEnabled)
+        //            {
+        //                m.scrubberStatus = "Off"; // <--- Set Local UI
+        //                continue;
+        //            }
+
+        //            int partCapacity = m.part.CrewCapacity;
+        //            if (partCapacity == 0) partCapacity = 1;
+
+        //            // 2. Check Global Power
+        //            double ecReq = baseEcRate * partCapacity;
+        //            (double amountConsumed, double ratio) ecRes = ConsumeResource(v, electricChargeId, ecReq);
+
+        //            if (ecRes.ratio < 0.99)
+        //            {
+        //                m.scrubberStatus = "No Power"; // <--- Set Local UI
+        //                continue;
+        //            }
+
+        //            // 3. Check Local LiOH
+        //            double liohReq = baseLiohRate * partCapacity;
+        //            double liohTaken = m.part.RequestResource(lithiumHydroxideId, liohReq);
+
+        //            if (liohTaken < liohReq - epsilon)
+        //            {
+        //                m.scrubberStatus = "No LiOH"; // <--- Set Local UI
+        //            }
+        //            else
+        //            {
+        //                // Success
+        //                m.part.RequestResource(wasteId, -liohTaken); // Waste
+        //                totalCO2Removed += (baseScrubRate * partCapacity);
+        //                m.scrubberStatus = "Active"; // <--- Set Local UI
+        //            }
+        //        }
+        //    }
+        //    else
+        //    {
+        //        // --- UNLOADED VESSEL ---
+        //        // (We don't update UI strings here because no one can see them)
+
+        //        foreach (ProtoPartSnapshot p in v.protoVessel.protoPartSnapshots)
+        //        {
+        //            bool isScrubberOn = false;
+        //            foreach (ProtoPartModuleSnapshot m in p.modules)
+        //            {
+        //                if (m.moduleName == "KickLifeSupportModule")
+        //                {
+        //                    if (bool.TryParse(m.moduleValues.GetValue("scrubberEnabled"), out bool val) && val)
+        //                    {
+        //                        isScrubberOn = true;
+        //                        break;
+        //                    }
+        //                }
+        //            }
+
+        //            if (!isScrubberOn) continue;
+
+        //            int partCapacity = 1;
+        //            if (p.partInfo != null && p.partInfo.partPrefab != null)
+        //                partCapacity = p.partInfo.partPrefab.CrewCapacity;
+        //            if (partCapacity == 0) partCapacity = 1;
+
+        //            // 1. EC
+        //            double ecReq = baseEcRate * partCapacity;
+        //            (double amountConsumed, double ratio) ecRes = ConsumeResource(v, electricChargeId, ecReq);
+        //            if (ecRes.ratio < 0.99) continue;
+
+        //            // 2. LiOH
+        //            double liohReq = baseLiohRate * partCapacity;
+        //            double liohTaken = 0;
+
+        //            foreach (ProtoPartResourceSnapshot r in p.resources)
+        //            {
+        //                if (r.definition.id == lithiumHydroxideId)
+        //                {
+        //                    if (r.amount >= liohReq)
+        //                    {
+        //                        r.amount -= liohReq;
+        //                        liohTaken = liohReq;
+        //                    }
+        //                    else
+        //                    {
+        //                        liohTaken = r.amount;
+        //                        r.amount = 0;
+        //                    }
+        //                    break;
+        //                }
+        //            }
+
+        //            if (liohTaken >= liohReq - epsilon)
+        //            {
+        //                // Waste
+        //                double wasteToAdd = liohTaken;
+        //                foreach (ProtoPartResourceSnapshot r in p.resources)
+        //                {
+        //                    if (r.definition.id == wasteId)
+        //                    {
+        //                        double space = r.maxAmount - r.amount;
+        //                        if (space >= wasteToAdd)
+        //                        {
+        //                            r.amount += wasteToAdd;
+        //                            wasteToAdd = 0;
+        //                        }
+        //                        else
+        //                        {
+        //                            r.amount = r.maxAmount;
+        //                            wasteToAdd -= space;
+        //                        }
+        //                    }
+        //                }
+        //                totalCO2Removed += (baseScrubRate * partCapacity);
+        //            }
+        //        }
+        //    }
+
+        //    // Apply Total Scrubbing to Cabin
+        //    status.cabinCO2 -= (float)totalCO2Removed;
+        //    if (status.cabinCO2 < 0) status.cabinCO2 = 0;
+        //}
+
         void EatFood(Vessel v, LifeSupportStatus status, double deltaTime, int crewCount)
         {
             if (ProcessConsumption(v, deltaTime, foodId, foodRequestRate, wasteId, wasteRequestRate, crewCount, true).resourceARatio < 1.0)
@@ -594,8 +771,6 @@ namespace KickLifeSupport
         /// <param name="deltaTime"></param>
         void RunClimateControl(Vessel v, LifeSupportStatus status, double deltaTime)
         {
-            double ratePerSeat = baseSystemECRequestRate * deltaTime;
-
             bool climateFailureDetected = false;
 
             if (v.loaded)
@@ -614,7 +789,8 @@ namespace KickLifeSupport
                         continue;
                     }
 
-                    double ecReq = ratePerSeat * capacity;
+                    double ecReq = m.systemECRate * deltaTime;
+                    if (m.isHeaterActive) ecReq += (m.heaterECRate * deltaTime);
                     (double amountConsumed, double ratio) ecRes = ConsumeResource(v, electricChargeId, ecReq);
 
                     if (ecRes.ratio < 0.99)
@@ -637,6 +813,7 @@ namespace KickLifeSupport
                     int capacity = p.partInfo.partPrefab.CrewCapacity;
                     if (capacity == 0) continue;
 
+                    double ecRate = 0.03;
                     bool isClimateOn = false;
                     foreach (ProtoPartModuleSnapshot m in p.modules)
                     {
@@ -647,7 +824,11 @@ namespace KickLifeSupport
                             {
                                 isClimateOn = true;
                             }
-                            break;
+
+                            val = m.moduleValues.GetValue("systemECRate");
+                            if (val != null) double.TryParse(val, out ecRate);
+
+                                break;
                         }
                     }
 
@@ -658,7 +839,7 @@ namespace KickLifeSupport
                         continue;
                     }
 
-                    double ecReq = ratePerSeat * capacity;
+                    double ecReq = ecRate * capacity;
                     (double amountConsumed, double ratio) ecRes = ConsumeResource(v, electricChargeId, ecReq);
                     if (ecRes.ratio < 0.99)
                     {
@@ -674,6 +855,38 @@ namespace KickLifeSupport
                 {
                     status.lsStatus = "Climate Control Failure";
                 }
+            }
+        }
+
+        void MonitorTemperature(Vessel v, LifeSupportStatus status, double deltaTime)
+        {
+            if (!v.loaded)
+            {
+                status.tempRangeTime = 0;
+                return;
+            }
+
+            bool tempIssueDetected = false;
+
+            List<KickLifeSupportModule> modules = v.FindPartModulesImplementing<KickLifeSupportModule>();
+            foreach (KickLifeSupportModule module in modules)
+            {
+                if (module.part.protoModuleCrew.Count == 0) continue;
+
+                if (KToC(module.part.temperature) < minSafeTemp || KToC(module.part.temperature) > maxSafeTemp)
+                {
+                    tempIssueDetected = true;
+                    break;
+                }
+            }
+
+            if (tempIssueDetected)
+            {
+                status.tempRangeTime += deltaTime;
+            }
+            else
+            {
+                status.tempRangeTime = 0;
             }
         }
 
@@ -708,6 +921,26 @@ namespace KickLifeSupport
             {
                 status.lsStatus = $"Suffocating! ({graceO2 - status.lowO2Time:F0}s)";
                 return;
+            }
+
+            if (status.lowClimateTime >= graceClimate)
+            {
+                KillCrew(v);
+                status.lsStatus = "Crew suffocated from stagnant air!";
+            }
+            else if (status.lowClimateTime > 0)
+            {
+                status.lsStatus = $"Air Circulation Failed! ({graceClimate - status.lowClimateTime:F0}s)";
+            }
+
+            if (status.tempRangeTime >= graceTemp)
+            {
+                KillCrew(v);
+                status.lsStatus = "Fatal temperature!";
+            }
+            else if (status.tempRangeTime > 0)
+            {
+                status.lsStatus = $"Cabin Temp Critical! ({graceClimate - status.tempRangeTime:F0}s)";
             }
 
             // PRIORITY 3: Water (Medium Death)
@@ -1072,8 +1305,13 @@ namespace KickLifeSupport
 
         #endregion
 
+        #region Temp Helpers
+        double KToC(double k) { return k - 273.15; }
+        double CToK(double c) { return c + 273.15; }
+        #endregion
+
         #region I/O
-        
+
         #endregion
     }
 }

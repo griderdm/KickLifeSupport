@@ -18,6 +18,8 @@ namespace KickLifeSupport
         public double lowO2Time = 0f;
         public double lowWaterTime = 0f;
         public double lowFoodTime = 0f;
+        public double lowClimateTime = 0f;
+        public double tempRangeTime = 0f;
 
         public double lastUpdateTime = 0;
 
@@ -30,6 +32,8 @@ namespace KickLifeSupport
             node.AddValue("LowO2Time", lowO2Time);
             node.AddValue("LowWaterTime", lowWaterTime);
             node.AddValue("LowFoodTime", lowFoodTime);
+            node.AddValue("LowClimateTime", lowClimateTime);
+            node.AddValue("TempRangeTime", tempRangeTime);
         }
 
         public void Load(ConfigNode node)
@@ -41,6 +45,8 @@ namespace KickLifeSupport
             double.TryParse(node.GetValue("LowO2Time"), out lowO2Time);
             double.TryParse(node.GetValue("LowWaterTime"), out lowWaterTime);
             double.TryParse(node.GetValue("LowFoodTime"), out lowFoodTime);
+            double.TryParse(node.GetValue("LowClimateTime"), out lowClimateTime);
+            double.TryParse(node.GetValue("TempRangeTime"), out tempRangeTime);
         }
     }
 }
