@@ -1,10 +1,8 @@
-using System.CodeDom;
-using System.Xml.Schema;
 using UnityEngine;
 
 namespace KickLifeSupport
 {
-    public class KickLifeSupportModule : PartModule
+    public partial class KickLifeSupportModule : PartModule
     {
         private const float UpdateInterval = 5f;
 
@@ -36,61 +34,34 @@ namespace KickLifeSupport
         [KSPField(guiActive = true, guiActiveEditor = false, guiName = "Scrubber Status", groupName = "KICKLS", groupDisplayName = "Life Support")]
         public string scrubberStatus = "On";
 
-        [KSPField(isPersistant = true, guiActive = true, guiActiveEditor = true, guiName = "Climate Control", groupName = "KICKLS", groupDisplayName = "Life Support"), UI_Toggle(disabledText = "Off", enabledText = "On")]
-        public bool climateControlEnabled = true;
-
-        [KSPField(guiActive = true, guiActiveEditor = false, guiName = "Climate Control Status", groupName = "KICKLS", groupDisplayName = "Life Support")]
-        public string climateControlStatus = "On";
-
-        [KSPField(guiActive = true, guiActiveEditor = false, guiName = "Cabin Heater", groupName = "KICKLS", groupDisplayName = "Life Support")]
-        public string heaterStatus = "Off";
-
-        [KSPField(guiActive = true, guiActiveEditor = false, guiName = "Cabin Temp", groupName = "KICKLS", groupDisplayName = "Life Support", guiFormat = "F1", guiUnits = "C")]
-        public float cabinTemp = 0f;
-
-        [KSPField(guiActive = true, guiActiveEditor = false, guiName = "System Heat Output", groupName = "KICKLS", groupDisplayName = "Life Support", guiFormat = "F3", guiUnits = " kW")]
-        public float heatFlux = 0;
-
-        [KSPField(isPersistant = true, guiActive = true, guiActiveEditor = true, guiName = "Avionics", groupName = "KICKLS", groupDisplayName = "Life Support"), UI_Toggle(disabledText = "Off", enabledText = "On")]
-        public bool avionicsEnabled = true;
-
-        [KSPField] public float avionicsECRate = 0.2f;
-        [KSPField] public float avionicsHeat = 0.2f;
-        [KSPField] public float sasECRate = 0.1f;
-        [KSPField] public float sasHeat = 0.1f;
-        [KSPField] public float rcsECRate = 0.1f;
-        [KSPField] public float rcsHeat = 0.1f;
-        [KSPField] public float systemECRate = 0.03f;
-        [KSPField] public float systemHeat = 0.03f;
-        [KSPField] public float heaterECRate = 0.5f;
-        [KSPField] public float heaterHeat = 0.5f;
-
-        const double thermostatTemp = 22;     // 22c
-        const double thermostatDeadband = 2;  // 2c;
-
         /// <summary>
         /// This is the amount of CO2 scrubbed from the cabin on the last frame.
         /// We'll use this to calculate the scrubber's exothermic release.
         /// </summary>
         public double lastScrubRate = 0;
 
-        /// <summary>
-        /// The amount of heat released per liter of CO2 reacted with LiOH at STP.
-        /// Based on 21.4 kcal per mole of CO2 absorbed
-        /// </summary>
-        const double liohReactionHeatPerUnit = 4.0;
-
-        public bool isHeaterActive = false;
-
         public override void OnStart(StartState state)
         {
             PartResourceDefinition wasteDef = PartResourceLibrary.Instance.GetDefinition("Waste");
             if (wasteDef != null) wasteId = wasteDef.id;
+
+            if (HighLogic.LoadedSceneIsFlight)
+            {
+                if (cabinTemp == 0 || cabinTemp < 200)
+                {
+                    cabinTemp = (float)(KToC(part.temperature));
+                }
+            }
         }
 
         public void FixedUpdate()
         {
             if (!HighLogic.LoadedSceneIsFlight || !vessel.loaded) return;
+
+            if (cabinTemp == 0 || cabinTemp < 200)
+            {
+                cabinTemp = (float)(KToC(part.temperature));
+            }
 
             // Run thermal physics
             double dt = TimeWarp.fixedDeltaTime;
@@ -153,33 +124,13 @@ namespace KickLifeSupport
                 totalFlux += (lastScrubRate * liohReactionHeatPerUnit);
             }
 
-            // Climate control
-            if (climateControlEnabled)
-            {
-                totalFlux += systemHeat;
-                float temp = (float)KToC(part.temperature);
-
-                if (temp < (thermostatTemp - (thermostatDeadband / 2)))
-                {
-                    heaterStatus = "Active";
-                    totalFlux += heaterHeat;
-                    isHeaterActive = true;
-                }
-                else if (temp > (thermostatTemp + (thermostatDeadband / 2)))
-                {
-                    heaterStatus = "Standby";
-                    isHeaterActive = false;
-                }
-            }
-            else
-            {
-                heaterStatus = "Disabled";
-                isHeaterActive = false;
-            }
-
-            // Apply heat
-            if (totalFlux > 0.001) part.AddThermalFlux(totalFlux);
+            RunThermalLogic(ref totalFlux, ref totalECRequest);
+            ApplyHeatFluxToCabinAir(totalFlux);
             if (totalECRequest > 0) part.RequestResource("ElectricCharge", totalECRequest);
+
+            // Heat the hull from the inside
+            double airToHullFlux = (cabinTemp - KToC(part.temperature)) * wallCoupling;
+            part.AddThermalFlux(airToHullFlux);
 
             if (KickLifeSupportScenario.Instance != null)
             {
@@ -187,14 +138,11 @@ namespace KickLifeSupport
                 lsStatus = data.lsStatus;
                 cabinCO2 = data.cabinCO2;
                 co2Level = (float)(cabinCO2 / (vessel.GetCrewCapacity() * airPerSeat));
-                cabinTemp = (float)KToC(part.temperature);
                 heatFlux = (float)totalFlux;
             }
         }
 
-        double KToC(double k) { return k - 273.15; }
-        double CToK(double c) { return c + 273.15; }
-
+        #region Scrubber Handling
         /// <summary>
         /// Allows the user to replace the lithium hydroxide canister
         /// </summary>
@@ -258,7 +206,9 @@ namespace KickLifeSupport
             }
             return false;
         }
+        #endregion
 
+        #region Avionics Helpers
         private bool VesselHasActiveCommand(Vessel v)
         {
             foreach (Part p in v.parts)
@@ -285,5 +235,6 @@ namespace KickLifeSupport
 
             return true;
         }
+        #endregion
     }
 }

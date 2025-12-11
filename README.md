@@ -1,7 +1,7 @@
 # KICK Life Support
 
 ## What Is It?
-KICK Life Support is a life support mod for KSP that is more realistic than [TAC](https://spacedock.info/mod/915/TAC%20Life%20Support), but isn't as expansive as [Kerbalism](https://spacedock.info/mod/1774/Kerbalism).
+KICK Life Support is a life support mod for KSP that is more realistic than [TAC](https://spacedock.info/mod/915/TAC%20Life%20Support), but isn't as expansive as [Kerbalism](https://spacedock.info/mod/1774/Kerbalism). Rather than being about the resources, it's about the hardware that makes life support function. It's more immersive for the player, and it even gives you some regular housekeeping tasks to do on your active vessel.
 ## Features
 Kerbals need food, water, oxygen, and stable temperatures to survive. They're energetic little guys with high metabolisms, so resources go fast. They also make waste products which have to be managed.
 ### Food & Water
@@ -33,12 +33,13 @@ SAS and RCS also have independent electronics that are on when they are enabled 
 - Background Processing - Unloaded/on-rails ships continue to work.
 - Small amounts of resource per pod - if you need more, bring it with you.
 ## Prerequesites
-- KSP 1.12
+- [KSP 1.12](https://store.steampowered.com/app/220200/Kerbal_Space_Program/)
 - [ModuleManager 4.2.3](https://forum.kerbalspaceprogram.com/topic/50533-18x-112x-module-manager-423-july-03th-2023-fireworks-season/)
 - [Community Resource Pack](https://github.com/UmbraSpaceIndustries/CommunityResourcePack/releases)
 ## Compatibility
-- Real Fuels
-- Universal Storage 2
+- [Real Fuels](https://forum.kerbalspaceprogram.com/topic/58236-18-real-fuels/)
+- [Universal Storage 2](https://spacedock.info/mod/2960/Universal%20Storage%20II%20Finalized)
+- [System Heat](https://forum.kerbalspaceprogram.com/topic/193909-112x-systemheat-a-replacement-for-the-coreheat-system-july-21/)
 ## Known Bugs
 - Very high warp (x10000 and above) will sometimes cause insta-death even when resources exist
 - The status text cycles through non-applicable warnings at high speed
