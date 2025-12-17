@@ -21,7 +21,19 @@ namespace KickLifeSupport
         public double lowClimateTime = 0f;
         public double tempRangeTime = 0f;
 
+        /// <summary>
+        /// The cabin temp reported when outside of the "safe" range.
+        /// This should not be used for anything other than reporting purposes.
+        /// </summary>
+        /// <remarks>
+        /// DO NOT use for monitoring. If you need the actual current cabin temperature, get
+        /// <code>KickLifeSupportModule.cabinTemp</code>.
+        /// </remarks>
+        public double lastCabinTemp = 22f;
+
         public double lastUpdateTime = 0;
+
+        public double lastScrubAmount = 0;
 
         public void Save(ConfigNode node)
         {

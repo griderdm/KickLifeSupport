@@ -1,3 +1,4 @@
+using System.Diagnostics.Eventing.Reader;
 using UnityEngine;
 
 namespace KickLifeSupport
@@ -6,6 +7,7 @@ namespace KickLifeSupport
     {
         private const float UpdateInterval = 5f;
 
+        #region Persistent Fields
         [KSPField(isPersistant = true)]
         public float lowO2Time = 0f;
         [KSPField(isPersistant = true)]
@@ -14,14 +16,20 @@ namespace KickLifeSupport
         public float lowFoodTime = 0f;
         [KSPField(isPersistant = true)]
         public float cabinCO2 = 0f;
+        #endregion
 
+        #region Resource IDs
         int wasteId = -1;
+        int liohId = -1;
+        int ecId = -1;
+        #endregion
 
         /// <summary>
         /// The amount of air (in liters) available per kerbal.
         /// </summary>
-        const double airPerSeat = 2000;
+        internal const double airPerSeat = 2000;
 
+        #region Module Fields
         [KSPField(guiActive = true, guiActiveEditor = false, guiName = "Status", groupName = "KICKLS", groupDisplayName = "Life Support")]
         public string lsStatus = "Nominal";
 
@@ -33,21 +41,20 @@ namespace KickLifeSupport
 
         [KSPField(guiActive = true, guiActiveEditor = false, guiName = "Scrubber Status", groupName = "KICKLS", groupDisplayName = "Life Support")]
         public string scrubberStatus = "On";
-
-        /// <summary>
-        /// This is the amount of CO2 scrubbed from the cabin on the last frame.
-        /// We'll use this to calculate the scrubber's exothermic release.
-        /// </summary>
-        public double lastScrubRate = 0;
+        #endregion
 
         public override void OnStart(StartState state)
         {
             PartResourceDefinition wasteDef = PartResourceLibrary.Instance.GetDefinition("Waste");
             if (wasteDef != null) wasteId = wasteDef.id;
+            PartResourceDefinition liohDef = PartResourceLibrary.Instance.GetDefinition("LithiumHydroxide");
+            if (liohDef != null) liohId = liohDef.id;
+            PartResourceDefinition ecDef = PartResourceLibrary.Instance.GetDefinition("ElectricCharge");
+            if (ecDef != null) ecId = ecDef.id;
 
             if (HighLogic.LoadedSceneIsFlight)
             {
-                if (cabinTemp == 0 || cabinTemp < 200)
+                if (cabinTemp == 0 || cabinTemp < -200)
                 {
                     cabinTemp = (float)(KToC(part.temperature));
                 }
@@ -58,45 +65,93 @@ namespace KickLifeSupport
         {
             if (!HighLogic.LoadedSceneIsFlight || !vessel.loaded) return;
 
-            if (cabinTemp == 0 || cabinTemp < 200)
+            LifeSupportStatus data;
+            if (KickLifeSupportScenario.Instance != null)
+                data = KickLifeSupportScenario.Instance.GetData(vessel.id);
+            else
+                return;
+
+                if (cabinTemp == 0 || cabinTemp < -200)
             {
                 cabinTemp = (float)(KToC(part.temperature));
             }
 
-            // Run thermal physics
             double dt = TimeWarp.fixedDeltaTime;
             double totalFlux = 0;
-            double totalECRequest = 0;
+
+            double avionicsEC = avionicsECRate * dt;
+            double sasEC = sasECRate * dt;
+            double rcsEC = rcsECRate * dt;
+
+            bool lockControls = false;
 
             ModuleCommand cmd = part.FindModuleImplementing<ModuleCommand>();
+            bool isHybernating = (cmd != null && cmd.hibernation);
             if (avionicsEnabled)
             {
                 // Unlock control
-                if (cmd != null && !cmd.isEnabled)
+                if (cmd != null && !cmd.isEnabled && !isHybernating)
                 {
                     cmd.isEnabled = true;
                     vessel.MakeActive();
                 }
 
-                totalECRequest += avionicsECRate * dt;
-                totalFlux += avionicsHeat;
-
-                // Check if SAS is enabled
-                if (vessel.ActionGroups[KSPActionGroup.SAS])
+                if (!isHybernating)
                 {
-                    totalECRequest += sasECRate * dt;
-                    totalFlux += sasHeat;
+                    lockControls = false;
+                    if (part.RequestResource(ecId, avionicsEC) < avionicsEC * 0.99)
+                    {
+                        lockControls = true;
+                    }
+                    else
+                    {
+                        totalFlux += avionicsHeat;
+
+                        if (vessel.ActionGroups[KSPActionGroup.SAS])
+                        {
+                            if (part.RequestResource(ecId, sasEC) < sasEC * 0.99)
+                            {
+                                vessel.ActionGroups.SetGroup(KSPActionGroup.SAS, false);
+                            }
+                            else
+                            {
+                                totalFlux += sasHeat;
+                            }
+                        }
+
+                        if (vessel.ActionGroups[KSPActionGroup.RCS])
+                        {
+                            if (part.RequestResource(ecId, rcsEC) < rcsEC * 0.99)
+                            {
+                                vessel.ActionGroups.SetGroup(KSPActionGroup.RCS, false);
+                            }
+                            else
+                            {
+                                totalFlux += rcsHeat;
+                            }
+                        }
+                    }
                 }
-
-                if (vessel.ActionGroups[KSPActionGroup.RCS])
+                else
                 {
-                    totalECRequest += rcsECRate * dt;
-                    totalFlux += rcsHeat;
+                    if (part.RequestResource(ecId, avionicsEC * 0.1) < avionicsEC * 0.1 * 0.99)
+                    {
+                        lockControls = true;
+                    }
+                    else
+                    {
+                        lockControls = false;
+                        totalFlux += avionicsHeat * 0.1;
+                    }
                 }
             }
             else
             {
-                // Lock controls
+                lockControls = true;
+            }
+
+            if (lockControls)
+            {
                 if (cmd != null && cmd.isEnabled)
                     cmd.isEnabled = false;
 
@@ -107,7 +162,6 @@ namespace KickLifeSupport
                         vessel.ActionGroups.SetGroup(KSPActionGroup.SAS, false);
                     if (vessel.ActionGroups[KSPActionGroup.RCS])
                         vessel.ActionGroups.SetGroup(KSPActionGroup.RCS, false);
-
                 }
             }
 
@@ -119,27 +173,22 @@ namespace KickLifeSupport
             }
 
             // Scrubber
-            if (lastScrubRate > 0)
+            if (data.lastScrubAmount > 0)
             {
-                totalFlux += (lastScrubRate * liohReactionHeatPerUnit);
+                totalFlux += (data.lastScrubAmount * liohReactionHeatPerUnit);
             }
 
-            RunThermalLogic(ref totalFlux, ref totalECRequest);
-            ApplyHeatFluxToCabinAir(totalFlux);
-            if (totalECRequest > 0) part.RequestResource("ElectricCharge", totalECRequest);
+            RunThermalLogic(ref totalFlux);
 
             // Heat the hull from the inside
             double airToHullFlux = (cabinTemp - KToC(part.temperature)) * wallCoupling;
             part.AddThermalFlux(airToHullFlux);
 
-            if (KickLifeSupportScenario.Instance != null)
-            {
-                LifeSupportStatus data = KickLifeSupportScenario.Instance.GetData(vessel.id);
-                lsStatus = data.lsStatus;
-                cabinCO2 = data.cabinCO2;
-                co2Level = (float)(cabinCO2 / (vessel.GetCrewCapacity() * airPerSeat));
-                heatFlux = (float)totalFlux;
-            }
+            
+            lsStatus = data.lsStatus;
+            cabinCO2 = data.cabinCO2;
+            co2Level = (float)(cabinCO2 / (vessel.GetCrewCapacity() * airPerSeat));
+            heatFlux = (float)totalFlux;
         }
 
         #region Scrubber Handling
@@ -150,20 +199,32 @@ namespace KickLifeSupport
         public void ReloadScrubber()
         {
             string cartridgePartName = "KickLSLiOHCartridge";
-            double cartridgeVolume = 3;
+            double cartridgeVolume = 1.5;
 
-            PartResource lioh = part.Resources["LithiumHydroxide"];
+            PartResource lioh = part.Resources.Get(liohId);
+            PartResource waste = part.Resources.Get(wasteId);
             if (lioh.amount >= lioh.maxAmount * 0.95)
             {
                 ScreenMessages.PostScreenMessage("Scrubber is already full.", 3f, ScreenMessageStyle.UPPER_CENTER);
                 return;
             }
 
+            double liOHToAdd = lioh.maxAmount - lioh.amount;
+            double wasteToStore = cartridgeVolume - liOHToAdd;
+
+            if (waste != null)
+            {
+                if ((waste.maxAmount - waste.amount) < wasteToStore)
+                {
+                    ScreenMessages.PostScreenMessage("Cannot reload: Waste storage is full!", 3f, ScreenMessageStyle.UPPER_CENTER);
+                    return;
+                }
+            }
+
             if (ConsumePartFromInventory(cartridgePartName))
             {
-                double waste = cartridgeVolume - (lioh.maxAmount - lioh.amount);
                 lioh.amount = lioh.maxAmount;
-                part.RequestResource(wasteId, -waste);    // Throw away the old cartridge
+                part.RequestResource(wasteId, -wasteToStore);    // Throw away the old cartridge
                 ScreenMessages.PostScreenMessage("Scrubber reloaded.", 3f, ScreenMessageStyle.UPPER_CENTER);
             }
             else

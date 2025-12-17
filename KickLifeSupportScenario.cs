@@ -1,6 +1,7 @@
 ﻿using JetBrains.Annotations;
 using System;
 using System.Collections.Generic;
+using System.Net;
 using UnityEngine;
 
 namespace KickLifeSupport
@@ -70,6 +71,8 @@ namespace KickLifeSupport
         const double maxSafeTemp = 45;  // 45c
 
         #endregion
+
+        public double lastScrubAmount = 0;
 
         public override void OnAwake()
         {
@@ -369,7 +372,7 @@ namespace KickLifeSupport
 
                 foreach (KickLifeSupportModule m in modules)
                 {
-                    float share = (float)(m.part.CrewCapacity / crewCapacity);
+                    float share = (float)m.part.CrewCapacity / crewCapacity;
                     m.cabinCO2 = totalCO2 * share;
                 }
             }
@@ -406,45 +409,47 @@ namespace KickLifeSupport
             Debug.Log($"[KICKLS] BreatheAir Result -> Produced: {resparation.co2Produced} | Ratio: {resparation.o2Ratio}");
 
             status.cabinCO2 += (float)resparation.co2Produced;
-            if (resparation.o2Ratio < 1.0)
+            if (resparation.o2Ratio < 0.99)
                 status.lowO2Time += deltaTime;
             else
                 status.lowO2Time = 0;
         }
 
+        /// <summary>
+        /// Scrubs CO2 out of the air
+        /// </summary>
+        /// <param name="v"></param>
+        /// <param name="status"></param>
+        /// <param name="deltaTime"></param>
+        /// <param name="totalCrewOnShip"></param>
+        /// <remarks>This whole method needs a rewrite, but a good one.</remarks>
         void RunScrubber(Vessel v, LifeSupportStatus status, double deltaTime, int totalCrewOnShip)
         {
             double totalCO2Removed = 0;
-            double availableCO2 = status.cabinCO2;
 
             // Rates per seat
             double baseScrubRate = scrubberRequestRate * deltaTime;
             double baseEcRate = scrubberECRequestRate * deltaTime;
             double baseLiohRate = lithiumHydroxideRequestRate * deltaTime;
 
-            // Calculate stiochiometric ratio
-            double liohPerLiterCO2 = 0;
-            if (scrubberRequestRate > 0)
-                liohPerLiterCO2 = lithiumHydroxideRequestRate / scrubberRequestRate;
-
             if (v.loaded)
             {
+                // --- LOADED VESSEL ---
                 List<KickLifeSupportModule> modules = v.FindPartModulesImplementing<KickLifeSupportModule>();
+
                 foreach (KickLifeSupportModule m in modules)
                 {
-                    m.lastScrubRate = 0;
-
-                    // Is the scrubber on?
+                    // 1. Check Switch
                     if (!m.scrubberEnabled)
                     {
-                        m.scrubberStatus = "Off";
+                        m.scrubberStatus = "Off"; // <--- Set Local UI
                         continue;
                     }
 
                     int partCapacity = m.part.CrewCapacity;
                     if (partCapacity == 0) partCapacity = 1;
 
-                    // Check that there's enough power to spin the fans
+                    // 2. Check Global Power
                     double ecReq = baseEcRate * partCapacity;
                     (double amountConsumed, double ratio) ecRes = ConsumeResource(v, electricChargeId, ecReq);
 
@@ -454,52 +459,20 @@ namespace KickLifeSupport
                         continue;
                     }
 
-                    // Check how much LiOH there is
-                    double currentLiOH = 0;
-                    PartResource lithiumHydroxide = m.part.Resources.Get(lithiumHydroxideId);
-                    if (lithiumHydroxide != null) currentLiOH = lithiumHydroxide.amount;
+                    // 3. Check Local LiOH
+                    double liohReq = baseLiohRate * partCapacity;
+                    double liohTaken = m.part.RequestResource(lithiumHydroxideId, liohReq);
 
-                    // Get the maximum mechanical scrub rate
-                    double maxMechanicalScrub = scrubberRequestRate * partCapacity * deltaTime;
-
-                    // Calculate how much CO2 you can scrub given the LiOH amount
-                    double maxChemicalScrub = 0;
-                    if (liohPerLiterCO2 > 0)
-                        maxChemicalScrub = currentLiOH * liohPerLiterCO2;
-
-                    // Get the max amount of CO2 that can be scrubbed
-                    double maxEnvironmentalScrub = availableCO2;
-
-                    // Find out how much can actually get scrubbed. It'll the the smallest value of the three.
-                    double actualScrub = Math.Min(maxMechanicalScrub, Math.Min(maxChemicalScrub, maxEnvironmentalScrub));
-
-                    // Scrub!
-                    if (actualScrub > epsilon)
+                    if (liohTaken < liohReq - epsilon)
                     {
-                        double liOHToConsume = actualScrub * liohPerLiterCO2;
-                        double liohTaken = m.part.RequestResource(lithiumHydroxideId, liOHToConsume);
-
-                        if (liohTaken < liOHToConsume - epsilon)
-                        {
-                            m.scrubberStatus = "No LiOH"; // <--- Set Local UI
-                        }
-                        else
-                        {
-                            // Success
-                            m.part.RequestResource(wasteId, -liohTaken); // Waste
-                            totalCO2Removed += (baseScrubRate * partCapacity);
-                            m.scrubberStatus = "Active"; // <--- Set Local UI
-                        }
-
-                        availableCO2 -= actualScrub;
-                        if (deltaTime > 0)
-                        {
-                            m.lastScrubRate = actualScrub / deltaTime;
-                        }
+                        m.scrubberStatus = "No LiOH"; // <--- Set Local UI
                     }
                     else
                     {
-                        m.scrubberStatus = "Standby";
+                        // Success
+                        m.part.RequestResource(wasteId, -liohTaken); // Waste
+                        totalCO2Removed += (baseScrubRate * partCapacity);
+                        m.scrubberStatus = "Active"; // <--- Set Local UI
                     }
                 }
             }
@@ -585,12 +558,20 @@ namespace KickLifeSupport
 
             // Apply Total Scrubbing to Cabin
             status.cabinCO2 -= (float)totalCO2Removed;
+            status.lastScrubAmount = totalCO2Removed;
             if (status.cabinCO2 < 0) status.cabinCO2 = 0;
         }
 
+        /// <summary>
+        /// Kerbals eat food, poop out waste
+        /// </summary>
+        /// <param name="v"></param>
+        /// <param name="status"></param>
+        /// <param name="deltaTime"></param>
+        /// <param name="crewCount"></param>
         void EatFood(Vessel v, LifeSupportStatus status, double deltaTime, int crewCount)
         {
-            if (ProcessConsumption(v, deltaTime, foodId, foodRequestRate, wasteId, wasteRequestRate, crewCount, true).resourceARatio < 1.0)
+            if (ProcessConsumption(v, deltaTime, foodId, foodRequestRate, wasteId, wasteRequestRate, crewCount, true).resourceARatio < 0.99)
                 status.lowFoodTime += deltaTime;
             else
                 status.lowFoodTime = 0;
@@ -602,7 +583,7 @@ namespace KickLifeSupport
         /// <param name="deltaTime"></param>
         void DrinkWater(Vessel v, LifeSupportStatus status, double deltaTime, int crewCount)
         {
-            if (ProcessConsumption(v, deltaTime, waterId, waterRequestRate, wasteWaterId, wasteWaterRequestRate, crewCount, true).resourceARatio < 1.0)
+            if (ProcessConsumption(v, deltaTime, waterId, waterRequestRate, wasteWaterId, wasteWaterRequestRate, crewCount, true).resourceARatio < 0.99)
                 status.lowWaterTime += deltaTime;
             else
                 status.lowWaterTime = 0;
@@ -631,39 +612,7 @@ namespace KickLifeSupport
         {
             bool climateFailureDetected = false;
 
-            if (v.loaded)
-            {
-                List<KickLifeSupportModule> modules = v.FindPartModulesImplementing<KickLifeSupportModule>();
-                foreach (KickLifeSupportModule m in modules)
-                {
-                    int capacity = m.part.CrewCapacity;
-                    if (capacity == 0) continue;
-
-                    if (!m.climateControlEnabled)
-                    {
-                        m.climateControlStatus = "Off";
-                        if (m.part.protoModuleCrew.Count > 0)
-                            climateFailureDetected = true;
-                        continue;
-                    }
-
-                    double ecReq = m.systemECRate * deltaTime;
-                    if (m.isHeaterActive) ecReq += (m.heaterHeat * deltaTime);  // Heater EC usage is the same as the heater strength.
-                    (double amountConsumed, double ratio) ecRes = ConsumeResource(v, electricChargeId, ecReq);
-
-                    if (ecRes.ratio < 0.99)
-                    {
-                        m.climateControlStatus = "No Power";
-                        if (m.part.protoModuleCrew.Count > 0)
-                            climateFailureDetected = true;
-                    }
-                    else
-                    {
-                        m.climateControlStatus = "Nominal";
-                    }
-                }
-            }
-            else
+            if (!v.loaded)
             {
                 foreach (ProtoPartSnapshot p in v.protoVessel.protoPartSnapshots)
                 {
@@ -731,9 +680,10 @@ namespace KickLifeSupport
             {
                 if (module.part.protoModuleCrew.Count == 0) continue;
 
-                if (KToC(module.part.temperature) < minSafeTemp || KToC(module.part.temperature) > maxSafeTemp)
+                if (module.cabinTemp < minSafeTemp || module.cabinTemp > maxSafeTemp)
                 {
                     tempIssueDetected = true;
+                    status.lastCabinTemp = module.cabinTemp;
                     break;
                 }
             }
@@ -758,6 +708,7 @@ namespace KickLifeSupport
             // PRIORITY 1: CO2 (Immediate Death)
             if (co2Level >= co2Fatal)
             {
+                Debug.LogWarning($"[KICKLS] DEATH: Crew on '{v.vesselName}' killed by CO2. Level: {co2Level:P2} (Limit: {co2Fatal:P2})");
                 KillCrew(v);
                 status.lsStatus = "Fatal CO2 Levels";
                 return;
@@ -771,6 +722,7 @@ namespace KickLifeSupport
             // PRIORITY 2: Oxygen (Fast Death)
             if (status.lowO2Time >= graceO2)
             {
+                Debug.LogWarning($"[KICKLS] DEATH: Crew on '{v.vesselName}' suffocated (No O2). Time without Air: {status.lowO2Time:F1}s (Limit: {graceO2:F1}s)");
                 KillCrew(v);
                 status.lsStatus = "Crew suffocated!";
                 return;
@@ -783,6 +735,7 @@ namespace KickLifeSupport
 
             if (status.lowClimateTime >= graceClimate)
             {
+                Debug.LogWarning($"[KICKLS] DEATH: Crew on '{v.vesselName}' suffocated (Climate Control Failure). Time without Circulation: {status.lowClimateTime:F1}s (Limit: {graceClimate:F1}s)");
                 KillCrew(v);
                 status.lsStatus = "Crew suffocated from stagnant air!";
             }
@@ -793,6 +746,7 @@ namespace KickLifeSupport
 
             if (status.tempRangeTime >= graceTemp)
             {
+                Debug.LogWarning($"[KICKLS] DEATH: Crew on '{v.vesselName}' froze/cooked. Time out of range: {status.tempRangeTime:F1}s (Limit: {graceTemp:F1}s); Current Temp: {status.lastCabinTemp:F0}C");
                 KillCrew(v);
                 status.lsStatus = "Fatal temperature!";
             }
@@ -804,6 +758,7 @@ namespace KickLifeSupport
             // PRIORITY 3: Water (Medium Death)
             if (status.lowWaterTime >= graceWater)
             {
+                Debug.LogWarning($"[KICKLS] DEATH: Crew on '{v.vesselName}' died of dehydration. Time without Water: {status.lowWaterTime:F1}s (Limit: {graceWater:F1}s)");
                 KillCrew(v);
                 status.lsStatus = "Crew dehydrated!";
                 return;
@@ -817,6 +772,7 @@ namespace KickLifeSupport
             // PRIORITY 4: Food (Slow Death)
             if (status.lowFoodTime >= graceFood)
             {
+                Debug.LogWarning($"[KICKLS] DEATH: Crew on '{v.vesselName}' starved to death. Time without Food: {status.lowFoodTime:F1}s (Limit: {graceFood:F1}s)");
                 KillCrew(v);
                 status.lsStatus = "Crew starved!";
                 return;

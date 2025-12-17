@@ -1,4 +1,6 @@
-﻿using UnityEngine;
+﻿using System;
+using System.Net;
+using UnityEngine;
 
 namespace KickLifeSupport
 {
@@ -31,8 +33,10 @@ namespace KickLifeSupport
         [UI_FloatRange(minValue = 0f, maxValue = 40f, stepIncrement = 0.5f, scene = UI_Scene.All)]
         public float heaterHeat = 0.5f;
 
-        [KSPField(guiActive = true, guiActiveEditor = false, guiName = "System Heat Output", groupName = "KICKLS", groupDisplayName = "Life Support", guiFormat = "F3", guiUnits = " kW")]
+        [KSPField(guiActive = true, guiActiveEditor = false, guiName = "Active Flux", groupName = "KICKLS", groupDisplayName = "Life Support", guiFormat = "F3", guiUnits = " kW")]
         public float heatFlux = 0;
+        [KSPField(guiActive = true, guiActiveEditor = false, guiName = "Passive Flux", groupName = "KICKLS", groupDisplayName = "Life Support", guiFormat = "F3", guiUnits = " kW")]
+        public float passiveFlux = 0;
 
         [KSPField(isPersistant = true, guiActive = true, guiActiveEditor = true, guiName = "Avionics", groupName = "KICKLS", groupDisplayName = "Life Support"), UI_Toggle(disabledText = "Off", enabledText = "On")]
         public bool avionicsEnabled = true;
@@ -47,23 +51,21 @@ namespace KickLifeSupport
         [KSPField] public float rcsHeat = 0.1f;
         [KSPField] public float systemECRate = 0.03f;
         [KSPField] public float systemHeat = 0.03f;
-        [KSPField] public float heaterECRate = 0.5f;
         #endregion
 
         #region Thermal Constants
-        const double thermostatDeadband = 2;  // 2c;
+        /// <summary>
+        /// The total deadband within which the thermostat operates.
+        /// </summary>
+        internal const double thermostatDeadband = 2;  // 2c;
         /// <summary>
         /// The amount of heat released per liter of CO2 reacted with LiOH at STP.
         /// Based on 21.4 kcal per mole of CO2 absorbed
         /// </summary>
-        const double liohReactionHeatPerUnit = 4.0;
-        const double airSpecificHeat = 1005.0;
-        const double airDensity = 0.001225;
-        const double wallCoupling = 0.0005;
-        #endregion
-
-        #region Thermal Variables
-        double airTempK;
+        internal const double liohReactionHeatPerUnit = 4.0;
+        internal const double airSpecificHeat = 1005.0;
+        internal const double airDensity = 0.001225;
+        internal const double wallCoupling = 0.003;
         #endregion
 
         #region Thermal Control
@@ -137,64 +139,104 @@ namespace KickLifeSupport
         double cachedAnalyticTemp;
         #endregion
 
-        void RunThermalLogic(ref double totalFlux, ref double ecRequest)
+        private float debugTimer = 0f;
+        void RunThermalLogic(ref double totalFlux)
         {
-            airTempK = CToK(cabinTemp);
-            airTempK += StaticThermalSimulation(airTempK);
+            // 1. Setup Local Variables (Safety First)
+            double currentAirTempK = CToK(cabinTemp);
+            double dt = TimeWarp.fixedDeltaTime;
 
-            // Climate control
+            // 2. Passive Simulation (Always runs)
+            // Heat moves from Air -> Hull (Cooling) or Hull -> Air (Warming)
+            double hullTemp = part.temperature;
+            double passiveChange = (hullTemp - currentAirTempK) * wallCoupling * dt;
+            currentAirTempK += passiveChange;
+
+            double systemEC = systemECRate * TimeWarp.fixedDeltaTime;
+            double heaterEC = heaterHeat *  TimeWarp.fixedDeltaTime;
+
+            if (TimeWarp.CurrentRate > 100f)
+            {
+                if (climateControlEnabled)
+                {
+                    if (part.RequestResource(ecId, systemEC) >= systemEC * 0.99)
+                    {
+                        cabinTemp = thermostatTemp;
+                    }
+                }
+
+                return;
+            }
+
+            // 3. Climate Control Logic
             if (climateControlEnabled)
             {
-                totalFlux += systemHeat;
-                float temp = (float)KToC(airTempK);
-                float lowThreshold = (float)(thermostatTemp - (thermostatDeadband / 2));
-                float highThreshold = (float)(thermostatTemp + (thermostatDeadband / 2));
-                float excessiveThreshold = (float)(thermostatTemp + (thermostatDeadband * 4));
+                if (part.RequestResource(ecId, systemEC) >= systemEC * 0.99)
+                {
+                    totalFlux += systemHeat;
 
-                if (temp < lowThreshold)
-                {
-                    heaterStatus = "Active";
-                    isHeaterActive = true;
-                    canAutoRadiator = false;
-                }
-                else if (temp > excessiveThreshold)
-                {
-                    heaterStatus = "Standby";
-                    isHeaterActive = false;
-                    canAutoRadiator = true;
-                }
-                else if (temp > highThreshold)
-                {
-                    heaterStatus = "Standby";
-                    isHeaterActive = false;
-                    canAutoRadiator = false;
-                }
+                    // FIX: Thermostat checks the PREDICTED AIR TEMP, not the Wall Temp!
+                    float currentAirC = (float)KToC(currentAirTempK);
 
-                if (isHeaterActive)
-                {
-                    heaterStatus = "Active";
-                    totalFlux += heaterHeat;
-                    ecRequest += (heaterHeat * heaterECRate * Time.fixedDeltaTime);
+                    float lowThreshold = (float)(thermostatTemp - (thermostatDeadband / 2));
+                    float highThreshold = (float)(thermostatTemp + (thermostatDeadband / 2));
+                    float excessiveThreshold = (float)(thermostatTemp + (thermostatDeadband * 4));
+
+                    // Thermostat Decision
+                    if (currentAirC < lowThreshold)
+                    {
+                        heaterStatus = "Active";
+                        isHeaterActive = true;
+                        canAutoRadiator = false;
+                    }
+                    else if (currentAirC > excessiveThreshold)
+                    {
+                        heaterStatus = "Standby";
+                        isHeaterActive = false;
+                        canAutoRadiator = true;
+                    }
+                    else if (currentAirC > highThreshold)
+                    {
+                        heaterStatus = "Standby";
+                        isHeaterActive = false;
+                        canAutoRadiator = false;
+                    }
+
+                    // Apply Heater
+                    if (isHeaterActive)
+                    {
+                        if (part.RequestResource(ecId, heaterEC) < heaterEC * 0.99)
+                        {
+                            heaterStatus = "No Power";
+                        }
+                        else
+                        {
+                            heaterStatus = "Active";
+                            totalFlux += heaterHeat;
+                        }
+                    }
+
+                    // Radiator Logic
+                    if (autoDeployRadiators)
+                    {
+                        if (canAutoRadiator)
+                        {
+                            ActivateRadiators();
+                            radiatorStatus = "Active";
+                        }
+                        else
+                        {
+                            DeactiveRadiators();
+                            radiatorStatus = "Standby";
+                        }
+                    }
                 }
                 else
                 {
-                    heaterStatus = "Standby";
+                    climateControlStatus = "No Power";
+                    heaterStatus = "See CC Status";
+                    radiatorStatus = "See CC Status";
                     isHeaterActive = false;
-                }
-
-                if (autoDeployRadiators)
-                {
-                    if (canAutoRadiator)
-                    {
-
-                        ActivateRadiators();
-                        radiatorStatus = "Active";
-                    }
-                    else
-                    {
-                        DeactiveRadiators();
-                        radiatorStatus = "Standby";
-                    }
                 }
             }
             else
@@ -203,28 +245,38 @@ namespace KickLifeSupport
                 radiatorStatus = "Disabled";
                 isHeaterActive = false;
             }
-        }
 
-        void ApplyHeatFluxToCabinAir(double totalFlux)
-        {
-            // Apply heat
-            if (totalFlux > 0.001)
+            double activeChange = 0; // <--- Define it here, default to 0
+
+            // Calculate Mass
+            double airMass = part.CrewCapacity * airPerSeat * airDensity;
+            if (airMass < 1.0) airMass = 5.0;
+
+            // Calculate Temperature Change if there is Flux
+            if (System.Math.Abs(totalFlux) > 0.00001)
             {
-                airTempK += CalculateTempChange(totalFlux);
-                cabinTemp = (float)KToC(airTempK);
+                double energyJoules = (totalFlux * 1000.0) * dt;
+                activeChange = energyJoules / (airMass * airSpecificHeat);
+                currentAirTempK += activeChange;
             }
-        }
 
-        double StaticThermalSimulation(double airTemp)
-        {
-            double hullTemp = part.temperature;
-            return (hullTemp - airTemp) * wallCoupling * Time.fixedDeltaTime;
-        }
+            // 5. Save Result to Persistent Field
+            cabinTemp = (float)KToC(currentAirTempK);
 
-        double CalculateTempChange(double fluxkW)
-        {
-            double energy = (fluxkW * 1000.0) * Time.fixedDeltaTime;
-            return energy / (part.CrewCapacity * airPerSeat * airDensity * airSpecificHeat);
+            double passiveEnergyJ = passiveChange * (airMass * airSpecificHeat);
+            double passiveKW = (passiveEnergyJ / dt) / 1000.0;
+            passiveFlux = (float)passiveKW;
+
+            debugTimer += Time.fixedDeltaTime;
+            if (debugTimer > 5f)
+            {
+                debugTimer = 0f;
+                // Calculate the equivalent KW of the passive loss to compare apples-to-apples
+
+                Debug.Log($"[KICKLS THERMAL] Hull: {KToC(hullTemp):F1}C | Air: {cabinTemp:F1}C | Mass: {airMass:F1}kg");
+                Debug.Log($"[KICKLS FLUX] IN (Active): {totalFlux:F4} kW || OUT (Passive): {passiveKW:F4} kW");
+                Debug.Log($"[KICKLS DELTA] Active Chg: {activeChange:F4} || Passive Chg: {passiveChange:F4}");
+            }
         }
 
         #region On-Rails Physics
