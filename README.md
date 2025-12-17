@@ -1,7 +1,11 @@
-# KICK Life Support
+# KICK Life Support (WIP)
 
 ## What Is It?
 KICK Life Support is a life support mod for KSP that is more realistic than [TAC](https://spacedock.info/mod/915/TAC%20Life%20Support), but isn't as expansive as [Kerbalism](https://spacedock.info/mod/1774/Kerbalism). Rather than being about the resources, it's about the hardware that makes life support function. It's more immersive for the player, and it even gives you some regular housekeeping tasks to do on your active vessel.
+## STANDARD DISCLAIMER
+**THIS MOD IS A WORK IN PROGRESS - It's designed explicitly to kill your kerbals when they run out of food, water, oxygen, and lithium hydroxide. There are bound to be bugs that could kill your Kerbals out of nowhere. So don't blame me when they perish.**
+
+**BUT if they do die unexpectedly, file a bug report.**
 ## Features
 Kerbals need food, water, oxygen, and stable temperatures to survive. They're energetic little guys with high metabolisms, so resources go fast. They also make waste products which have to be managed.
 ### Food & Water
