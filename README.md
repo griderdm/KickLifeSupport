@@ -41,8 +41,7 @@ SAS and RCS also have independent electronics that are on when they are enabled 
 - [Universal Storage 2](https://spacedock.info/mod/2960/Universal%20Storage%20II%20Finalized)
 - [System Heat](https://forum.kerbalspaceprogram.com/topic/193909-112x-systemheat-a-replacement-for-the-coreheat-system-july-21/)
 ## Known Bugs
-- Very high warp (x10000 and above) will sometimes cause insta-death even when resources exist
-- The status text cycles through non-applicable warnings at high speed
+- None right now
 ## Roadmap & Upcoming Features
 - UI for background processing
 - Carbon Dioxide Removal Assembly (CDRA) - Instead of only using a LiOH scrubber, the CDRA will extract CO2 to allow for storage (or dumping overboard).
