@@ -409,7 +409,8 @@ namespace KickLifeSupport
         {
             (double co2Produced, double o2Ratio) resparation = ProcessConsumption(v, deltaTime, o2Id, o2RequestRate, co2Id, co2RequestRate, crewCount, false);
 
-            Debug.Log($"[KICKLS] BreatheAir Result -> Produced: {resparation.co2Produced} | Ratio: {resparation.o2Ratio}");
+            // Todo: Add a player setting for debug data
+            //Debug.Log($"[KICKLS] BreatheAir Result -> Produced: {resparation.co2Produced} | Ratio: {resparation.o2Ratio}");
 
             status.cabinCO2 += (float)resparation.co2Produced;
             if (resparation.o2Ratio < 0.99)
@@ -442,48 +443,41 @@ namespace KickLifeSupport
 
                 foreach (KickLifeSupportModule m in modules)
                 {
-                    // 1. Check Switch
                     if (!m.scrubberEnabled)
                     {
-                        m.scrubberStatus = "Off"; // <--- Set Local UI
+                        m.scrubberStatus = "Off";
                         continue;
                     }
 
                     int partCapacity = m.part.CrewCapacity;
                     if (partCapacity == 0) partCapacity = 1;
 
-                    // 2. Check Global Power
                     double ecReq = baseEcRate * partCapacity;
                     (double amountConsumed, double ratio) ecRes = ConsumeResource(v, electricChargeId, ecReq);
 
                     if (ecRes.ratio < 0.99)
                     {
-                        m.scrubberStatus = "No Power"; // <--- Set Local UI
+                        m.scrubberStatus = "No Power";
                         continue;
                     }
 
-                    // 3. Check Local LiOH
                     double liohReq = baseLiohRate * partCapacity;
                     double liohTaken = m.part.RequestResource(lithiumHydroxideId, liohReq);
 
                     if (liohTaken < liohReq - epsilon)
                     {
-                        m.scrubberStatus = "No LiOH"; // <--- Set Local UI
+                        m.scrubberStatus = "No LiOH";
                     }
                     else
                     {
-                        // Success
-                        m.part.RequestResource(wasteId, -liohTaken); // Waste
+                        m.part.RequestResource(wasteId, -liohTaken);
                         totalCO2Removed += (baseScrubRate * partCapacity);
-                        m.scrubberStatus = "Active"; // <--- Set Local UI
+                        m.scrubberStatus = "Active";
                     }
                 }
             }
             else
             {
-                // --- UNLOADED VESSEL ---
-                // (We don't update UI strings here because no one can see them)
-
                 foreach (ProtoPartSnapshot p in v.protoVessel.protoPartSnapshots)
                 {
                     bool isScrubberOn = false;
@@ -506,12 +500,10 @@ namespace KickLifeSupport
                         partCapacity = p.partInfo.partPrefab.CrewCapacity;
                     if (partCapacity == 0) partCapacity = 1;
 
-                    // 1. EC
                     double ecReq = baseEcRate * partCapacity;
                     (double amountConsumed, double ratio) ecRes = ConsumeResource(v, electricChargeId, ecReq);
                     if (ecRes.ratio < 0.99) continue;
 
-                    // 2. LiOH
                     double liohReq = baseLiohRate * partCapacity;
                     double liohTaken = 0;
 
@@ -535,7 +527,6 @@ namespace KickLifeSupport
 
                     if (liohTaken >= liohReq - epsilon)
                     {
-                        // Waste
                         double wasteToAdd = liohTaken;
                         foreach (ProtoPartResourceSnapshot r in p.resources)
                         {
@@ -559,7 +550,6 @@ namespace KickLifeSupport
                 }
             }
 
-            // Apply Total Scrubbing to Cabin
             status.cabinCO2 -= (float)totalCO2Removed;
             status.lastScrubAmount = totalCO2Removed;
             if (status.cabinCO2 < 0) status.cabinCO2 = 0;
@@ -718,6 +708,9 @@ namespace KickLifeSupport
         {
             double co2Level = CalculateCabinCO2(status, GetCrewCapacity(v));
 
+            // PRIORITY 0: Nominal
+            status.lsStatus = "Nominal";
+
             // PRIORITY 1: CO2 (Immediate Death)
             if (co2Level >= co2Fatal)
             {
@@ -799,8 +792,7 @@ namespace KickLifeSupport
                 return;
             }
 
-            // PRIORITY 5: Nominal
-            status.lsStatus = "Nominal";
+            
         }
         #endregion
 

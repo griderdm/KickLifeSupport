@@ -142,11 +142,10 @@ namespace KickLifeSupport
         private float debugTimer = 0f;
         void RunThermalLogic(ref double totalFlux)
         {
-            // 1. Setup Local Variables (Safety First)
             double currentAirTempK = CToK(cabinTemp);
             double dt = TimeWarp.fixedDeltaTime;
 
-            // 2. Passive Simulation (Always runs)
+            // Passive Simulation
             // Heat moves from Air -> Hull (Cooling) or Hull -> Air (Warming)
             double hullTemp = part.temperature;
             double passiveChange = (hullTemp - currentAirTempK) * wallCoupling * dt;
@@ -168,7 +167,7 @@ namespace KickLifeSupport
                 return;
             }
 
-            // 3. Climate Control Logic
+            // Climate Control
             if (climateControlEnabled)
             {
                 if (part.RequestResource(ecId, systemEC) >= systemEC * 0.99)
@@ -246,13 +245,13 @@ namespace KickLifeSupport
                 isHeaterActive = false;
             }
 
-            double activeChange = 0; // <--- Define it here, default to 0
+            double activeChange = 0;
 
-            // Calculate Mass
+            // Calculate cabin air thermal mass
             double airMass = part.CrewCapacity * airPerSeat * airDensity;
             if (airMass < 1.0) airMass = 5.0;
 
-            // Calculate Temperature Change if there is Flux
+            // Calculate temp change from flux
             if (System.Math.Abs(totalFlux) > 0.00001)
             {
                 double energyJoules = (totalFlux * 1000.0) * dt;
@@ -260,13 +259,15 @@ namespace KickLifeSupport
                 currentAirTempK += activeChange;
             }
 
-            // 5. Save Result to Persistent Field
+            // Save result
             cabinTemp = (float)KToC(currentAirTempK);
 
             double passiveEnergyJ = passiveChange * (airMass * airSpecificHeat);
             double passiveKW = (passiveEnergyJ / dt) / 1000.0;
             passiveFlux = (float)passiveKW;
 
+            // Todo: Add a setting for debug data.
+            // For now, we'll keep this because the thermal stuff is finicky.
             debugTimer += Time.fixedDeltaTime;
             if (debugTimer > 5f)
             {
@@ -279,6 +280,7 @@ namespace KickLifeSupport
             }
         }
 
+        // THIS WHOLE REGION IS SO THAT THE MODULE PLAYS WELL WITH THE THERMAL SYSTEM AT WARP
         #region On-Rails Physics
         public void SetAnalyticTemperature(FlightIntegrator fi, double analyticTemp, double toBeInternal, double toBeSkin)
         {
@@ -301,7 +303,7 @@ namespace KickLifeSupport
                 double targetK = CToK(thermostatTemp);
 
                 // Simple Warp Logic:
-                // If the Hull is WARMER than target, the air overheats (AC not simulated here yet).
+                // If the Hull is WARMER than target, the air overheats
                 // If the Hull is COLDER than target, we assume the heater is working and holding steady.
 
                 if (cachedAnalyticTemp > targetK)

@@ -1,3 +1,11 @@
+## (v0.1) 12/16/2025 
+- Added a KSP settings tab
+- Did a bunch of code cleanup and minor bug fixes
+- Tweaked EC settings
+- Added more documentation
+- Initial release
+## 12/15/2025
+- Made a *bunch* of tweaks, adjustments, and bug fixes.
 ## 12/9/2025
 - Added on-rails thermal calculations.
 - Added adjustable thermostat
@@ -11,9 +19,5 @@
 - I need to do some testing to figure out if there's a pattern for thermal control.
 - I've only tested the thermal system so far using a single loop of radiators
 
-## 12/15/2025
-- Made a *bunch* of tweaks, adjustments, and bug fixes.
 
-## 12/16/2025
-- Added a KSP settings tab
-- First release
+
