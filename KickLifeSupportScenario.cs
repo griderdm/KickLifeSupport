@@ -12,6 +12,7 @@ namespace KickLifeSupport
         const double epsilon = 0.00000001;
 
         public static KickLifeSupportScenario Instance { get; private set; }
+        KickLifeSupportSettings gameSettings;
 
         public Dictionary<Guid, LifeSupportStatus> database = new Dictionary<Guid, LifeSupportStatus>();
 
@@ -284,6 +285,8 @@ namespace KickLifeSupport
 
         void GetSettings()
         {
+            gameSettings = HighLogic.CurrentGame.Parameters.CustomParams<KickLifeSupportSettings>();
+
             ConfigNode[] nodes = GameDatabase.Instance.GetConfigNodes("KICKLS_SETTINGS");
             if (nodes.Length == 0)
             {
@@ -610,6 +613,11 @@ namespace KickLifeSupport
         /// <param name="deltaTime"></param>
         void RunClimateControl(Vessel v, LifeSupportStatus status, double deltaTime)
         {
+            if (!gameSettings.useCabinTempSystem)
+            {
+                return;
+            }
+
             bool climateFailureDetected = false;
 
             if (!v.loaded)
@@ -667,6 +675,11 @@ namespace KickLifeSupport
 
         void MonitorTemperature(Vessel v, LifeSupportStatus status, double deltaTime)
         {
+            if (!gameSettings.useCabinTempSystem)
+            {
+                return;
+            }
+
             if (!v.loaded)
             {
                 status.tempRangeTime = 0;
@@ -733,26 +746,29 @@ namespace KickLifeSupport
                 return;
             }
 
-            if (status.lowClimateTime >= graceClimate)
+            if (gameSettings.useCabinTempSystem)
             {
-                Debug.LogWarning($"[KICKLS] DEATH: Crew on '{v.vesselName}' suffocated (Climate Control Failure). Time without Circulation: {status.lowClimateTime:F1}s (Limit: {graceClimate:F1}s)");
-                KillCrew(v);
-                status.lsStatus = "Crew suffocated from stagnant air!";
-            }
-            else if (status.lowClimateTime > 0)
-            {
-                status.lsStatus = $"Air Circulation Failed! ({graceClimate - status.lowClimateTime:F0}s)";
-            }
+                if (status.lowClimateTime >= graceClimate)
+                {
+                    Debug.LogWarning($"[KICKLS] DEATH: Crew on '{v.vesselName}' suffocated (Climate Control Failure). Time without Circulation: {status.lowClimateTime:F1}s (Limit: {graceClimate:F1}s)");
+                    KillCrew(v);
+                    status.lsStatus = "Crew suffocated from stagnant air!";
+                }
+                else if (status.lowClimateTime > 0)
+                {
+                    status.lsStatus = $"Air Circulation Failed! ({graceClimate - status.lowClimateTime:F0}s)";
+                }
 
-            if (status.tempRangeTime >= graceTemp)
-            {
-                Debug.LogWarning($"[KICKLS] DEATH: Crew on '{v.vesselName}' froze/cooked. Time out of range: {status.tempRangeTime:F1}s (Limit: {graceTemp:F1}s); Current Temp: {status.lastCabinTemp:F0}C");
-                KillCrew(v);
-                status.lsStatus = "Fatal temperature!";
-            }
-            else if (status.tempRangeTime > 0)
-            {
-                status.lsStatus = $"Cabin Temp Critical! ({graceClimate - status.tempRangeTime:F0}s)";
+                if (status.tempRangeTime >= graceTemp)
+                {
+                    Debug.LogWarning($"[KICKLS] DEATH: Crew on '{v.vesselName}' froze/cooked. Time out of range: {status.tempRangeTime:F1}s (Limit: {graceTemp:F1}s); Current Temp: {status.lastCabinTemp:F0}C");
+                    KillCrew(v);
+                    status.lsStatus = "Fatal temperature!";
+                }
+                else if (status.tempRangeTime > 0)
+                {
+                    status.lsStatus = $"Cabin Temp Critical! ({graceClimate - status.tempRangeTime:F0}s)";
+                }
             }
 
             // PRIORITY 3: Water (Medium Death)

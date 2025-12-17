@@ -5,6 +5,8 @@ namespace KickLifeSupport
 {
     public partial class KickLifeSupportModule : PartModule
     {
+        KickLifeSupportSettings gameSettings;
+
         private const float UpdateInterval = 5f;
 
         #region Persistent Fields
@@ -45,6 +47,8 @@ namespace KickLifeSupport
 
         public override void OnStart(StartState state)
         {
+            gameSettings = HighLogic.CurrentGame.Parameters.CustomParams<KickLifeSupportSettings>();
+
             PartResourceDefinition wasteDef = PartResourceLibrary.Instance.GetDefinition("Waste");
             if (wasteDef != null) wasteId = wasteDef.id;
             PartResourceDefinition liohDef = PartResourceLibrary.Instance.GetDefinition("LithiumHydroxide");
@@ -178,13 +182,19 @@ namespace KickLifeSupport
                 totalFlux += (data.lastScrubAmount * liohReactionHeatPerUnit);
             }
 
-            RunThermalLogic(ref totalFlux);
+            if (gameSettings.useCabinTempSystem)
+            {
+                RunThermalLogic(ref totalFlux);
 
-            // Heat the hull from the inside
-            double airToHullFlux = (cabinTemp - KToC(part.temperature)) * wallCoupling;
-            part.AddThermalFlux(airToHullFlux);
+                // Heat the hull from the inside
+                double airToHullFlux = (cabinTemp - KToC(part.temperature)) * wallCoupling;
+                part.AddThermalFlux(airToHullFlux);
+            }
+            else
+            {
+                totalFlux = 0;
+            }
 
-            
             lsStatus = data.lsStatus;
             cabinCO2 = data.cabinCO2;
             co2Level = (float)(cabinCO2 / (vessel.GetCrewCapacity() * airPerSeat));

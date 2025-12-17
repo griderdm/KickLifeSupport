@@ -13,4 +13,7 @@
 
 ## 12/15/2025
 - Made a *bunch* of tweaks, adjustments, and bug fixes.
-- 
+
+## 12/16/2025
+- Added a KSP settings tab
+- First release
