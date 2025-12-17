@@ -518,8 +518,26 @@ namespace KickLifeSupport
                             }
                             else
                             {
-                                liohTaken = r.amount;
-                                r.amount = 0;
+                                if (TryReloadScrubberUnloaded(v, p))
+                                {
+                                    if (r.amount >= liohReq)
+                                    {
+                                        r.amount -= liohReq;
+                                        liohTaken = liohReq;
+                                    }
+                                    else
+                                    {
+                                        // For safety
+                                        liohTaken = r.amount;
+                                        r.amount = 0;
+                                    }
+                                }
+                                else
+                                {
+                                    // Cartridge reload failed
+                                    liohTaken = r.amount;
+                                    r.amount = 0;
+                                }
                             }
                             break;
                         }
@@ -1127,13 +1145,96 @@ namespace KickLifeSupport
 
         #endregion
 
-        #region Temp Helpers
-        double KToC(double k) { return k - 273.15; }
-        double CToK(double c) { return c + 273.15; }
+        #region Background Support
+
+        bool TryReloadScrubberUnloaded(Vessel v, ProtoPartSnapshot podPart)
+        {
+            string cartridgePartName = "KickLSLiOHCartridge";
+            double cartridgeVolume = 1.5;
+
+            ProtoPartResourceSnapshot liohRes = null;
+            ProtoPartResourceSnapshot wasteRes = null;
+
+            // Get the resources
+            foreach (var r in podPart.resources)
+            {
+                if (r.definition.id == lithiumHydroxideId) liohRes = r;
+                if (r.definition.id == wasteId) wasteRes = r;
+            }
+
+            if (liohRes == null) return false;  // There's no LiOH tank on this pod. Abort! Abort!
+
+            double liOHToAdd = liohRes.maxAmount - liohRes.amount;
+            if (liOHToAdd < liohRes.maxAmount * 0.1) return false;
+
+            double wasteToStore = cartridgeVolume - liOHToAdd;
+
+            // Check that there's a waste tank
+            if (wasteRes != null)
+            {
+                // Check if waste is full
+                if ((wasteRes.maxAmount - wasteRes.amount) < wasteToStore) 
+                    return false;
+            }
+            // If there's no waste tank, don't worry, we'll figure that out later
+
+            // Now look for a cartridge
+            foreach (ProtoPartSnapshot p in v.protoVessel.protoPartSnapshots)
+            {
+                foreach (ProtoPartModuleSnapshot m in p.modules)
+                {
+                    if (m.moduleName == "ModuleInventoryPart")
+                    {
+                        ConfigNode[] storedParts = m.moduleValues.GetNodes("STORED_PARTS");
+                        for (int i = 0; i < storedParts.Length; i++)
+                        {
+                            ConfigNode itemNode = storedParts[i];
+                            if (itemNode.GetValue("partName") == cartridgePartName)
+                            {
+                                // Okay, we got one
+
+                                int quantity = 1;
+                                // Count them
+                                if (itemNode.HasValue("quantity"))
+                                    int.TryParse(itemNode.GetValue("quantity"), out quantity);
+
+                                if (quantity > 1)
+                                {
+                                    // Remove one and save
+                                    quantity--;
+                                    itemNode.SetValue("quantity", quantity.ToString());
+                                }
+                                else
+                                {
+                                    // Remove the last one and save
+                                    m.moduleValues.RemoveNode(itemNode);
+                                }
+
+                                // Refill the LiOH tank
+                                liohRes.amount = liohRes.maxAmount;
+
+                                // Add waste
+                                if (wasteRes != null)
+                                {
+                                    wasteRes.amount += wasteToStore;
+                                    if (wasteRes.amount > wasteRes.maxAmount) wasteRes.amount = wasteRes.maxAmount;
+                                    // Yes, I know this means that the cartridge can get thrown away for free
+                                }
+                                else
+                                {
+                                    // There's no tank. Let's try to throw it away *somewhere*
+                                    ProduceResource(v, wasteId, wasteToStore);
+                                }
+                                return true;
+                            }
+                        }
+                    }
+                }
+            }
+            return false;
+        }
+
         #endregion
 
-        #region I/O
-
-        #endregion
     }
 }

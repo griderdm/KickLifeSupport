@@ -55,4 +55,4 @@ echo.
 
 H:
 cd "H:\SteamLibrary\steamapps\common\Kerbal Space Program"
-REM start KSP_x64.exe
+start KSP_x64.exe
