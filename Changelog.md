@@ -1,3 +1,11 @@
+# Changelog
+## (v0.1.1) 12/20/2025
+### Changes
+- Added logging to `TryReloadScrubberUnloaded()`
+- Removed spammy logging
+- Added a version file
+### Bug Fixes
+- Fixed a bug where background ships did not automatically reload the scrubber
 ## (v0.1) 12/16/2025 
 - Added a KSP settings tab
 - Did a bunch of code cleanup and minor bug fixes

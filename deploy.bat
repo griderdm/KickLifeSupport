@@ -17,6 +17,7 @@ echo.
 
 REM Define paths
 set SOURCE_DLL=bin\Release\net472\KickLifeSupport.dll
+set SOURCE_VERS=GameData\KickLifeSupport\KickLifeSupport.version
 set SOURCE_CFG=GameData\KickLifeSupport\KickLifeSupport.cfg
 set SOURCE_SETTINGS_CFG=GameData\KickLifeSupport\Settings.cfg
 set SOURCE_RADIATORS_CFG=GameData\KickLifeSupport\Radiators.cfg
@@ -38,6 +39,7 @@ REM Copy files
 echo Deploying files to KSP...
 copy /Y "%SOURCE_DLL%" "%DEST_DIR%\KickLifeSupport.dll"
 copy /Y "%SOURCE_CFG%" "%DEST_DIR%\KickLifeSupport.cfg"
+copy /Y "%SOURCE_VERS%" "%DEST_DIR%\KickLifeSupport.version"
 copy /Y "%SOURCE_SETTINGS_CFG%" "%DEST_DIR%\Settings.cfg"
 copy /Y "%SOURCE_RADIATORS_CFG%" "%DEST_DIR%\Radiators.cfg"
 copy /Y "%SOURCE_RESOURCE%" "%DEST_RESOURCES%\LithiumHydroxide.cfg"

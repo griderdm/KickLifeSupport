@@ -1,0 +1,26 @@
+{
+  "NAME": "KickLifeSupport",
+  "URL": "https://raw.githubusercontent.com/griderdm/GameData/KickLifeSupport/KickLifeSupport.version",
+  "DOWNLOAD": "https://github.com/griderdm/KickLifeSupport/releases",
+  "VERSION": {
+    "MAJOR": 0,
+    "MINOR": 1,
+    "PATCH": 1,
+    "BUILD": 0
+  },
+  "KSP_VERSION": {
+    "MAJOR": 1,
+    "MINOR": 12,
+    "PATCH": 5
+  },
+  "KSP_VERSION_MIN": {
+    "MAJOR": 1,
+    "MINOR": 12,
+    "PATCH": 0
+  },
+  "KSP_VERSION_MAX": {
+    "MAJOR": 1,
+    "MINOR": 12,
+    "PATCH": 99
+  }
+}

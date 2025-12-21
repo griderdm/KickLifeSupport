@@ -122,8 +122,10 @@ namespace KickLifeSupport
                 float totalCabinCO2 = GetTotalCO2(v);
                 data.cabinCO2 = totalCabinCO2;
 
+                /*
                 if (v == FlightGlobals.ActiveVessel)
                     Debug.Log($"[KICKLS] Processing Active Vessel: {v.vesselName} | Crew: {liveCrew} | dT: {deltaTime}");
+                */
 
                 BreatheAir(v, data, deltaTime, liveCrew);
                 RunScrubber(v, data, deltaTime, crewCapacity);
@@ -832,7 +834,7 @@ namespace KickLifeSupport
             if (rARequestRate <= epsilon) return (0, 1.0);
 
             (double consumed, double ratio) resultA  = ConsumeResource(v, resourceA, rARequestRate);
-            Debug.Log($"[KICKLS] ConsumeResource returned: {resultA.consumed} (Ratio: {resultA.ratio})");
+            //Debug.Log($"[KICKLS] ConsumeResource returned: {resultA.consumed} (Ratio: {resultA.ratio})");
 
             double rBProduced = resultA.ratio * resourceBRate * deltaTime * crewCount;
             if (store)
@@ -1162,7 +1164,11 @@ namespace KickLifeSupport
                 if (r.definition.id == wasteId) wasteRes = r;
             }
 
-            if (liohRes == null) return false;  // There's no LiOH tank on this pod. Abort! Abort!
+            if (liohRes == null)
+            {
+                Debug.Log($"[KICKLS] TryReloadScrubberUnloaded() - NO LiOH TANK!");
+                return false;  // There's no LiOH tank on this pod. Abort! Abort!
+            }
 
             double liOHToAdd = liohRes.maxAmount - liohRes.amount;
             if (liOHToAdd < liohRes.maxAmount * 0.1) return false;
@@ -1173,8 +1179,11 @@ namespace KickLifeSupport
             if (wasteRes != null)
             {
                 // Check if waste is full
-                if ((wasteRes.maxAmount - wasteRes.amount) < wasteToStore) 
+                if ((wasteRes.maxAmount - wasteRes.amount) < wasteToStore)
+                {
+                    Debug.Log($"[KICKLS] TryReloadScrubberUnloaded() - Waste Full!");
                     return false;
+                }
             }
             // If there's no waste tank, don't worry, we'll figure that out later
 
@@ -1185,7 +1194,8 @@ namespace KickLifeSupport
                 {
                     if (m.moduleName == "ModuleInventoryPart")
                     {
-                        ConfigNode[] storedParts = m.moduleValues.GetNodes("STORED_PARTS");
+                        ConfigNode inventoryNode = m.moduleValues.GetNode("STOREDPARTS");
+                        ConfigNode[] storedParts = inventoryNode.GetNodes("STOREDPART");
                         for (int i = 0; i < storedParts.Length; i++)
                         {
                             ConfigNode itemNode = storedParts[i];
@@ -1219,18 +1229,22 @@ namespace KickLifeSupport
                                     wasteRes.amount += wasteToStore;
                                     if (wasteRes.amount > wasteRes.maxAmount) wasteRes.amount = wasteRes.maxAmount;
                                     // Yes, I know this means that the cartridge can get thrown away for free
+                                    Debug.Log($"[KICKLS] TryReloadScrubberUnloaded() - Cartridge Replaced");
                                 }
                                 else
                                 {
                                     // There's no tank. Let's try to throw it away *somewhere*
                                     ProduceResource(v, wasteId, wasteToStore);
+                                    Debug.Log($"[KICKLS] TryReloadScrubberUnloaded() - Cartridge Replaced (No Waste)");
                                 }
+                                Debug.Log($"[KICKLS] Scrubber Auto-Reloaded (Background) on {v.vesselName}.");
                                 return true;
                             }
                         }
                     }
                 }
             }
+            Debug.Log($"[KICKLS] TryReloadScrubberUnloaded() - NO CARTRIDGE!");
             return false;
         }
 
