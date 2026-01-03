@@ -307,14 +307,14 @@ namespace KickLifeSupport
                 // If the Hull is COLDER than target, we assume the heater is working and holding steady.
 
                 if (cachedAnalyticTemp > targetK)
-                    cabinTemp = (float)cachedAnalyticTemp; // It's hot in here
+                    cabinTemp = (float)KToC(cachedAnalyticTemp); // It's hot in here
                 else
-                    cabinTemp = (float)targetK; // Heater is maintaining temp
+                    cabinTemp = (float)KToC(targetK); // Heater is maintaining temp
             }
             else
             {
                 // Heater off? Air equals Wall.
-                cabinTemp = (float)cachedAnalyticTemp;
+                cabinTemp = (float)KToC(cachedAnalyticTemp);
             }
 
             return -1; // Return -1 so we don't mess with KSP's actual thermal system
