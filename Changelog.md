@@ -1,4 +1,9 @@
 # Changelog
+## (v0.1.2) 1/3/2026
+### Changes
+- Happy New Year
+### Bug Fixes
+- Fixed [#1](https://github.com/griderdm/KickLifeSupport/issues/1), hopefully. Cabin temperature was not converted to C when assigned to background ships. Thanks for the catch, @theeresink.
 ## (v0.1.1) 12/20/2025
 ### Changes
 - Added logging to `TryReloadScrubberUnloaded()`
