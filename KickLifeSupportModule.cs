@@ -121,13 +121,6 @@ namespace KickLifeSupport
             bool isHybernating = (cmd != null && cmd.hibernation);
             if (avionicsEnabled)
             {
-                // Unlock control
-                if (cmd != null && !cmd.isEnabled && !isHybernating)
-                {
-                    cmd.isEnabled = true;
-                    vessel.MakeActive();
-                }
-
                 if (!isHybernating)
                 {
                     lockControls = false;
@@ -180,6 +173,14 @@ namespace KickLifeSupport
             else
             {
                 lockControls = true;
+            }
+
+            // Unlock control only once the avionics actually have power. Re-enabling the command
+            // module before the EC check made it flip on and off every physics tick on an empty
+            // battery, and vessel.MakeActive() resets the flight camera each time it is called.
+            if (!lockControls && !isHybernating && cmd != null && !cmd.isEnabled)
+            {
+                cmd.isEnabled = true;
             }
 
             if (lockControls)
