@@ -1180,6 +1180,12 @@ namespace KickLifeSupport
                             break; 
                         }
                     }
+
+                    // Vessel.GetCrewCount() reads Vessel.crew, which is not rebuilt for unloaded
+                    // vessels. Without this the vessel still counts as crewed and gets "killed"
+                    // again on every update.
+                    v.protoVessel.RemoveCrew(crew);
+                    v.RemoveCrew(crew);
                 }
             }
 
