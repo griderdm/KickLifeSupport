@@ -2,6 +2,7 @@
 using System;
 using System.Collections.Generic;
 using System.Net;
+using KSP.UI.Screens;
 using UnityEngine;
 
 namespace KickLifeSupport
@@ -780,7 +781,7 @@ namespace KickLifeSupport
             if (co2Level >= co2Fatal)
             {
                 Debug.LogWarning($"[KICKLS] DEATH: Crew on '{v.vesselName}' killed by CO2. Level: {co2Level:P2} (Limit: {co2Fatal:P2})");
-                KillCrew(v);
+                KillCrew(v, "CO2 poisoning");
                 status.lsStatus = "Fatal CO2 Levels";
                 return;
             }
@@ -794,7 +795,7 @@ namespace KickLifeSupport
             if (status.lowO2Time >= graceO2)
             {
                 Debug.LogWarning($"[KICKLS] DEATH: Crew on '{v.vesselName}' suffocated (No O2). Time without Air: {status.lowO2Time:F1}s (Limit: {graceO2:F1}s)");
-                KillCrew(v);
+                KillCrew(v, "suffocation (out of oxygen)");
                 status.lsStatus = "Crew suffocated!";
                 return;
             }
@@ -809,7 +810,7 @@ namespace KickLifeSupport
                 if (status.lowClimateTime >= graceClimate)
                 {
                     Debug.LogWarning($"[KICKLS] DEATH: Crew on '{v.vesselName}' suffocated (Climate Control Failure). Time without Circulation: {status.lowClimateTime:F1}s (Limit: {graceClimate:F1}s)");
-                    KillCrew(v);
+                    KillCrew(v, "stagnant air (climate control failure)");
                     status.lsStatus = "Crew suffocated from stagnant air!";
                 }
                 else if (status.lowClimateTime > 0)
@@ -820,7 +821,7 @@ namespace KickLifeSupport
                 if (status.tempRangeTime >= graceTemp)
                 {
                     Debug.LogWarning($"[KICKLS] DEATH: Crew on '{v.vesselName}' froze/cooked. Time out of range: {status.tempRangeTime:F1}s (Limit: {graceTemp:F1}s); Current Temp: {status.lastCabinTemp:F0}C");
-                    KillCrew(v);
+                    KillCrew(v, "cabin temperature out of range");
                     status.lsStatus = "Fatal temperature!";
                 }
                 else if (status.tempRangeTime > 0)
@@ -833,7 +834,7 @@ namespace KickLifeSupport
             if (status.lowWaterTime >= graceWater)
             {
                 Debug.LogWarning($"[KICKLS] DEATH: Crew on '{v.vesselName}' died of dehydration. Time without Water: {status.lowWaterTime:F1}s (Limit: {graceWater:F1}s)");
-                KillCrew(v);
+                KillCrew(v, "dehydration");
                 status.lsStatus = "Crew dehydrated!";
                 return;
             }
@@ -847,7 +848,7 @@ namespace KickLifeSupport
             if (status.lowFoodTime >= graceFood)
             {
                 Debug.LogWarning($"[KICKLS] DEATH: Crew on '{v.vesselName}' starved to death. Time without Food: {status.lowFoodTime:F1}s (Limit: {graceFood:F1}s)");
-                KillCrew(v);
+                KillCrew(v, "starvation");
                 status.lsStatus = "Crew starved!";
                 return;
             }
@@ -1133,7 +1134,7 @@ namespace KickLifeSupport
             }
         }
 
-        void KillCrew(Vessel v)
+        void KillCrew(Vessel v, string cause)
         {
             // 1. Get a copy of the crew list
             // (We need a copy because we are about to modify the vessel's crew list)
@@ -1187,6 +1188,33 @@ namespace KickLifeSupport
             if (anyoneDied && v.loaded)
             {
                 GameEvents.onVesselChange.Fire(v);
+            }
+
+            // 5. Tell the player: without this the crew just disappears, e.g. on a vessel in the background
+            if (anyoneDied)
+                NotifyCrewDeath(v, crewList, cause);
+        }
+
+        void NotifyCrewDeath(Vessel v, List<ProtoCrewMember> crewList, string cause)
+        {
+            List<string> names = new List<string>();
+            foreach (ProtoCrewMember crew in crewList)
+                names.Add(crew.name);
+
+            string text = $"{string.Join(", ", names)} died on {v.vesselName}: {cause}.";
+            ScreenMessages.PostScreenMessage(text, 10f, ScreenMessageStyle.UPPER_CENTER);
+
+            // Drop out of time warp, like other events that need the player's attention
+            if (TimeWarp.fetch != null && TimeWarp.CurrentRateIndex > 0)
+                TimeWarp.SetRate(0, true, false);
+
+            if (MessageSystem.Instance != null)
+            {
+                MessageSystem.Instance.AddMessage(new MessageSystem.Message(
+                    "Crew lost: " + v.vesselName,
+                    text,
+                    MessageSystemButton.MessageButtonColor.RED,
+                    MessageSystemButton.ButtonIcons.ALERT));
             }
         }
 
